@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item};
 
+use super::files;
 use crate::{Error, Result};
 
 pub(crate) const REMOVAL_NOTE: &str =
@@ -55,7 +56,10 @@ pub(crate) fn migrate_settings_path(
         }
     }
 
-    let backup_path = write_next_backup(path, original_contents)?;
+    let permissions = std::fs::metadata(path)
+        .map_err(|source| Error::read_file(path, source))?
+        .permissions();
+    let backup_path = write_next_backup(path, original_contents, &permissions)?;
     std::fs::create_dir_all(&environment_dir).map_err(|source| {
         Error::other(format!(
             "creating server environments directory {}: {source}",
@@ -64,7 +68,7 @@ pub(crate) fn migrate_settings_path(
     })?;
     for environment in &to_write {
         let target = environment_dir.join(format!("{}.toml", environment.id));
-        write_new_file(&target, &environment.contents)?;
+        write_new_file(&target, &environment.contents, &permissions)?;
     }
     std::fs::write(path, &next_contents).map_err(|source| {
         Error::other(format!(
@@ -187,17 +191,13 @@ fn is_valid_environment_id(value: &str) -> bool {
     bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
-fn write_new_file(path: &Path, contents: &str) -> Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|source| {
-            Error::other(format!(
-                "writing server environment file {}: {source}",
-                path.display()
-            ))
-        })?;
+fn write_new_file(path: &Path, contents: &str, permissions: &std::fs::Permissions) -> Result<()> {
+    let mut file = files::create_new_file(path, permissions).map_err(|source| {
+        Error::other(format!(
+            "writing server environment file {}: {source}",
+            path.display()
+        ))
+    })?;
     file.write_all(contents.as_bytes()).map_err(|source| {
         Error::other(format!(
             "writing server environment file {}: {source}",
@@ -213,14 +213,14 @@ fn write_new_file(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_next_backup(path: &Path, contents: &str) -> Result<PathBuf> {
+fn write_next_backup(
+    path: &Path,
+    contents: &str,
+    permissions: &std::fs::Permissions,
+) -> Result<PathBuf> {
     for index in 0u32.. {
         let backup_path = backup_path_for(path, index);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&backup_path)
-        {
+        match files::create_new_file(&backup_path, permissions) {
             Ok(mut file) => {
                 file.write_all(contents.as_bytes()).map_err(|source| {
                     Error::other(format!(

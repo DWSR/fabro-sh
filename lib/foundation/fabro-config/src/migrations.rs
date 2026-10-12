@@ -7,6 +7,8 @@ use std::path::Path;
 
 use crate::Result;
 
+mod files;
+
 #[path = "../migrations/2026050101_legacy_sandbox_to_environments.rs"]
 mod legacy_sandbox_to_environments;
 #[path = "../migrations/2026091801_remove_server_slatedb.rs"]
@@ -52,3 +54,7 @@ pub(crate) fn run_migrations(
     }
     Ok(report)
 }
+
+#[cfg(all(test, unix))]
+#[path = "migrations/tests.rs"]
+mod tests;
