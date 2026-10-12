@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::DocumentMut;
 
+use super::files;
 use crate::{Error, Result};
 
 /// When this migration can be removed.
@@ -75,13 +76,12 @@ pub(crate) fn migrate_contents(contents: &str) -> Option<String> {
 }
 
 fn write_next_backup(path: &Path, contents: &str) -> Result<PathBuf> {
+    let permissions = std::fs::metadata(path)
+        .map_err(|source| Error::read_file(path, source))?
+        .permissions();
     for index in 0u32.. {
         let backup_path = backup_path_for(path, index);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&backup_path)
-        {
+        match files::create_new_file(&backup_path, &permissions) {
             Ok(mut file) => {
                 file.write_all(contents.as_bytes()).map_err(|source| {
                     Error::other(format!(
