@@ -2991,10 +2991,9 @@ async fn delete_run_sandbox_resource(
                 );
                 Ok(SandboxDeleteOutcome::Cleaned)
             } else {
-                Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    format!("Failed to delete the run's sandboxes: {problems}"),
-                ))
+                Err(sandbox_cleanup_conflict(&format!(
+                    "Failed to delete the run's sandboxes: {problems}"
+                )))
             }
         }
         // A live process still holds the run: only a forced delete leaves
@@ -3021,10 +3020,20 @@ async fn delete_run_sandbox_resource(
                 );
                 Ok(SandboxDeleteOutcome::Cleaned)
             } else {
-                Err(ApiError::new(StatusCode::CONFLICT, message))
+                Err(sandbox_cleanup_conflict(&message))
             }
         }
     }
+}
+
+/// A refused cleanup keeps the run for a retry; say how to delete it anyway.
+fn sandbox_cleanup_conflict(message: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        format!(
+            "{message} (use force=true or --force to delete the run and leave its sandboxes behind)"
+        ),
+    )
 }
 
 async fn reject_active_delete_without_force(

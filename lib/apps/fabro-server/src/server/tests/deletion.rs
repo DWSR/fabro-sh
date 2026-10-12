@@ -234,12 +234,9 @@ async fn failed_cleanup_preserves_completed_results_across_retries_and_restart()
         for _ in 0..2 {
             let response = deletion_response(&run.app, run.id, false).await;
             let error = response_json!(response, StatusCode::CONFLICT).await;
-            assert!(
-                error["errors"][0]["detail"]
-                    .as_str()
-                    .unwrap()
-                    .contains("Failed to delete the run's sandboxes")
-            );
+            let detail = error["errors"][0]["detail"].as_str().unwrap();
+            assert!(detail.contains("Failed to delete the run's sandboxes"));
+            assert!(detail.contains("use force=true or --force"));
             assert!(workspace.is_dir());
             assert_completed_result(&run.app, run.id, &before).await;
         }
