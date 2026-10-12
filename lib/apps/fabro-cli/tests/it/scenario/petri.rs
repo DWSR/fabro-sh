@@ -130,6 +130,12 @@ impl RunningServer {
     /// Start the server process over this storage; the same call brings
     /// it back after a kill.
     pub(super) async fn launch(&mut self) {
+        self.launch_with_env(&[]).await;
+    }
+
+    /// Relaunch with overrides applied only to this server process. The next
+    /// ordinary launch returns to the original environment.
+    pub(super) async fn launch_with_env(&mut self, env: &[(&str, &str)]) {
         assert!(self.child.is_none(), "the server is already running");
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_fabro"));
         apply_test_isolation(&mut cmd, self.home_root.path());
@@ -142,6 +148,9 @@ impl RunningServer {
         );
         cmd.env(EnvVars::FABRO_TEST_CHECKPOINT_GATES, &self.gates_dir);
         for (name, value) in &self.env {
+            cmd.env(name, value);
+        }
+        for (name, value) in env {
             cmd.env(name, value);
         }
         cmd.args(["server", "start", "--foreground"])

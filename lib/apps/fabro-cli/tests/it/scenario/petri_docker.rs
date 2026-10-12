@@ -26,8 +26,8 @@ use fabro_test::{
 use serde_json::json;
 
 use super::petri::{
-    RunningServer, crash, run_detached_in, wait_for_status, wait_for_success, wait_for_worker,
-    write_petri_workflow,
+    RunningServer, crash, run_detached_in, run_json, wait_for_status, wait_for_success,
+    wait_for_worker, write_petri_workflow,
 };
 use crate::support::TEST_DEV_TOKEN;
 
@@ -422,5 +422,90 @@ async fn an_ask_fabro_turn_reads_a_file_inside_the_runs_container() {
     );
 
     cleanup(&run_id);
+    server.shutdown();
+}
+
+/// An unavailable daemon refuses cleanup without changing a completed run,
+/// even after repeated requests and server restarts. `DOCKER_HOST` is
+/// overridden only on the disposable server, so other tests and the real daemon
+/// are intact.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires Docker; creates a container and restarts a disposable server"]
+async fn docker_failed_cleanup_preserves_success_across_server_restarts() {
+    assert!(
+        fabro_test::docker_available(),
+        "this explicit test requires Docker"
+    );
+    let context = test_context!();
+    let mut server = docker_server().await;
+    let workspace = hello_file_bundle(&context);
+    let run_id = run_detached_in(&context, &server, &workspace, ENVIRONMENT, &[
+        "--auto-approve",
+    ]);
+    let _cleanup = scopeguard::guard(run_id.clone(), |id| cleanup(&id));
+    wait_for_success(&server, &run_id).await;
+    let before = run_json(&server, &format!("runs/{run_id}/state")).await;
+    let container = container_of(&run_id).expect("the completed run retains its container");
+    let absent_socket = format!("unix://{}", context.temp_dir.join("absent.sock").display());
+    server.kill();
+    server
+        .launch_with_env(&[(EnvVars::DOCKER_HOST, &absent_socket)])
+        .await;
+    let client = fabro_test::test_http_client();
+    for _ in 0..2 {
+        let response = client
+            .delete(format!("{}/api/v1/runs/{run_id}", server.api_base_url))
+            .bearer_auth(TEST_DEV_TOKEN)
+            .send()
+            .await
+            .expect("the delete sends");
+        fabro_test::expect_reqwest_status(
+            response,
+            fabro_http::StatusCode::CONFLICT,
+            "DELETE /api/v1/runs/{id} with unavailable Docker",
+        )
+        .await;
+        let after = run_json(&server, &format!("runs/{run_id}/state")).await;
+        for field in ["status", "status_updated_at", "conclusion"] {
+            assert_eq!(after[field], before[field], "cleanup changed {field}");
+        }
+        assert_eq!(container_of(&run_id).as_deref(), Some(container.as_str()));
+    }
+    server.kill();
+    server.launch().await;
+    let after = run_json(&server, &format!("runs/{run_id}/state")).await;
+    for field in ["status", "status_updated_at", "conclusion"] {
+        assert_eq!(after[field], before[field], "restart changed {field}");
+    }
+    assert_eq!(container_of(&run_id).as_deref(), Some(container.as_str()));
+    let response = client
+        .delete(format!("{}/api/v1/runs/{run_id}", server.api_base_url))
+        .bearer_auth(TEST_DEV_TOKEN)
+        .send()
+        .await
+        .expect("the retry sends");
+    fabro_test::expect_reqwest_status(
+        response,
+        fabro_http::StatusCode::NO_CONTENT,
+        "DELETE /api/v1/runs/{id} after restoring Docker",
+    )
+    .await;
+    assert_eq!(
+        container_of(&run_id),
+        None,
+        "successful retry deletes the container"
+    );
+    let response = client
+        .get(format!("{}/api/v1/runs/{run_id}", server.api_base_url))
+        .bearer_auth(TEST_DEV_TOKEN)
+        .send()
+        .await
+        .expect("the run read sends");
+    fabro_test::expect_reqwest_status(
+        response,
+        fabro_http::StatusCode::NOT_FOUND,
+        "GET /api/v1/runs/{id} after successful deletion",
+    )
+    .await;
     server.shutdown();
 }
