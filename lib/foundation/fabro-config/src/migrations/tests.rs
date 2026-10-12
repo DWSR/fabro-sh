@@ -108,10 +108,11 @@ fn migrations_preserve_permissions_under_controlled_umasks() {
             .env(CHILD_UMASK, umask)
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // A filter that matches nothing still exits successfully.
         assert!(
-            output.status.success(),
-            "umask {umask}:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
+            output.status.success() && stdout.contains("1 passed"),
+            "umask {umask}:\n{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
     }
