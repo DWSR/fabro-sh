@@ -753,6 +753,13 @@ async fn deleting_a_run_prunes_its_host_workspace_through_petri() {
         working_directory.is_dir(),
         "the refused delete left the workspace"
     );
+    let after_refusal = settled_state(&state, &app, &run_id).await;
+    for field in ["status", "status_updated_at", "conclusion"] {
+        assert_eq!(
+            after_refusal[field], projection[field],
+            "refused cleanup changed {field}"
+        );
+    }
     drop(held);
     wait_for_free_lease(store, &key).await;
 

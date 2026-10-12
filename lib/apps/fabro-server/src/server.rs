@@ -2885,9 +2885,10 @@ async fn delete_run_sandbox_resource(
             ));
         }
     };
-    let delete_started = matches!(projection.status, RunStatus::Removing);
-    let can_mark_removing = projection.status.can_transition_to(RunStatus::Removing);
-    if !delete_started && can_mark_removing {
+    // Deleting resources must not reopen a completed workflow. A failed prune
+    // leaves its terminal result intact, including across a server restart.
+    if !projection.status.is_terminal() && projection.status.can_transition_to(RunStatus::Removing)
+    {
         run_records::lifecycle(
             state,
             id,
@@ -2934,9 +2935,9 @@ async fn delete_run_sandbox_resource(
         .join("petri");
     let sandbox = match state.load_sandbox_provider_config(&record.provider).await {
         Ok(sandbox) => sandbox,
-        // A forced or restarted delete goes on without the sandboxes, as it
+        // An explicitly forced delete goes on without the sandboxes, as it
         // does for any other prune failure below.
-        Err(err) if force || delete_started => {
+        Err(err) if force => {
             tracing::warn!(
                 run_id = %id,
                 provider = %record.provider,
@@ -2972,7 +2973,7 @@ async fn delete_run_sandbox_resource(
             Ok(SandboxDeleteOutcome::Cleaned)
         }
         // A lease Petri could not prune keeps its pending intent, so a
-        // later prune tries again; a forced or restarted delete goes on
+        // later prune tries again; an explicitly forced delete goes on
         // without it.
         Ok(report) => {
             let problems = report
@@ -2981,7 +2982,7 @@ async fn delete_run_sandbox_resource(
                 .map(|(lease, problem)| format!("lease {lease}: {problem}"))
                 .collect::<Vec<_>>()
                 .join("; ");
-            if force || delete_started {
+            if force {
                 tracing::warn!(
                     run_id = %id,
                     provider = %record.provider,
@@ -2990,10 +2991,9 @@ async fn delete_run_sandbox_resource(
                 );
                 Ok(SandboxDeleteOutcome::Cleaned)
             } else {
-                Err(ApiError::new(
-                    StatusCode::CONFLICT,
-                    format!("Failed to delete the run's sandboxes: {problems}"),
-                ))
+                Err(sandbox_cleanup_conflict(&format!(
+                    "Failed to delete the run's sandboxes: {problems}"
+                )))
             }
         }
         // A live process still holds the run: only a forced delete leaves
@@ -3012,7 +3012,7 @@ async fn delete_run_sandbox_resource(
         }
         Err(error) => {
             let message = collect_chain(&error).join(": ");
-            if force || delete_started {
+            if force {
                 tracing::warn!(
                     run_id = %id,
                     error = %message,
@@ -3020,10 +3020,20 @@ async fn delete_run_sandbox_resource(
                 );
                 Ok(SandboxDeleteOutcome::Cleaned)
             } else {
-                Err(ApiError::new(StatusCode::CONFLICT, message))
+                Err(sandbox_cleanup_conflict(&message))
             }
         }
     }
+}
+
+/// A refused cleanup keeps the run for a retry; say how to delete it anyway.
+fn sandbox_cleanup_conflict(message: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        format!(
+            "{message} (use force=true or --force to delete the run and leave its sandboxes behind)"
+        ),
+    )
 }
 
 async fn reject_active_delete_without_force(
