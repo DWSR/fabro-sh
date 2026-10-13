@@ -181,23 +181,13 @@ jobs:
     if: needs.check.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # The release App's credentials live in this environment. A pull request
-    # opened with the App's token, unlike one opened with GITHUB_TOKEN,
-    # triggers rust.yml on it.
-    environment: nightly
+    # Repository settings must allow GitHub Actions to create pull requests.
+    # PR CI created or updated with GITHUB_TOKEN waits for a maintainer to
+    # select "Approve workflows to run" on the pull request.
     permissions:
-      contents: read # check out the tested commit; writes go through the App token
+      contents: write # push the tested lock to the update branch
+      pull-requests: write # open or update the pull request
     steps:
-      - name: Mint GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
-        with:
-          client-id: ${{ vars.FABRO_RELEASES_APP_CLIENT_ID }}
-          private-key: ${{ secrets.FABRO_RELEASES_APP_PRIVATE_KEY }}
-          # Narrowed to what this job does: push the branch, open the PR.
-          permission-contents: write
-          permission-pull-requests: write
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0 # the branch merges the tested commit into its history
@@ -215,7 +205,7 @@ jobs:
       # so it can never reach main.
       - name: Push the lock and open or update the pull request
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           BRANCH: bot/internal-deps
           SUMMARY: ${{ needs.check.outputs.summary }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -224,8 +214,8 @@ jobs:
           lock="$RUNNER_TEMP/internal-deps-lock/Cargo.lock"
           repo_api="repos/$GITHUB_REPOSITORY"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git config user.name "fabro-releases[bot]"
-          git config user.email "fabro-releases[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           pr="$(gh api "$repo_api/pulls?head=$GITHUB_REPOSITORY_OWNER:$BRANCH&base=main&state=open" --jq '.[0].number // empty')"
           if [ -n "$pr" ]; then
@@ -261,7 +251,7 @@ jobs:
             echo
             echo "${SUMMARY:-No summary was recorded.}"
             echo
-            echo "Opened by the Internal dependencies workflow (\`.github/workflows/internal-deps.yml\`), which updates this branch each night the update passes. Merge it when CI is green."
+            echo "Opened by the Internal dependencies workflow (\`.github/workflows/internal-deps.yml\`), which updates this branch each night the update passes. Select \"Approve workflows to run\" on this pull request to start PR CI, then merge it when CI is green."
           } > "$body"
           if [ -n "$pr" ]; then
             gh api -X PATCH "$repo_api/pulls/$pr" -F body=@"$body" --jq '"Updated \(.html_url)"'
