@@ -63,6 +63,7 @@ use fabro_types::settings::run::{
 use fabro_types::settings::size::Size;
 use fabro_types::{FailureReason, RunId, SandboxProviderKind};
 use fabro_util::sync;
+use lithos_llm::types::Error as LlmError;
 use petri_execution::host::{self, HostError, HostRun};
 use petri_execution::inspect::{self, InspectError, RunInspection};
 use petri_execution::watchdog::{StallWatchdog, WatchdogTask};
@@ -167,6 +168,8 @@ pub struct RunOutcome {
 /// Why the run could not be executed or its outcome read.
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
+    #[error("the run ID could not be applied to model request headers")]
+    ModelHeaders(#[source] LlmError),
     #[error("the run's sandbox provider `{provider}` is not one Petri serves")]
     UnsupportedProvider { provider: SandboxProviderKind },
     #[error("the Daytona CPU allocation must be a non-negative integer: {cpu}")]
@@ -215,7 +218,7 @@ fn network_policy(settings: &EnvironmentNetworkSettings) -> NetworkPolicy {
 }
 
 /// Execute the run to its end and report what the record says.
-pub async fn run(request: RunRequest) -> Result<RunOutcome, RunError> {
+pub async fn run(mut request: RunRequest) -> Result<RunOutcome, RunError> {
     let backend = if request.runtime.dry_run {
         // The dry-run admission pass puts every scope on the host. Keep the
         // real local workspace for Fabro's checkpoint and artifact hooks.
@@ -225,6 +228,15 @@ pub async fn run(request: RunRequest) -> Result<RunOutcome, RunError> {
             provider: request.provider.clone(),
         })?
     };
+    // Scope once before either start or resume; native steps, hooks and
+    // subagents inherit this client through the runtime capability.
+    request.runtime.model_client = request
+        .runtime
+        .model_client
+        .as_ref()
+        .map(|client| client.with_default_headers([("x-session-id", request.run_id.as_str())]))
+        .transpose()
+        .map_err(RunError::ModelHeaders)?;
     let key = RunKey::new(request.run_id.as_str());
     let stall_timeout = match &request.execution {
         Execution::Start(graphs) => graphs.graph.policy.stall_timeout,

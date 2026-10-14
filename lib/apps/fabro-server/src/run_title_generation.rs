@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fabro_llm::{Client, Request};
+use fabro_llm::{Client, Request, client as llm_client};
 use fabro_template::{TemplateContext, TemplateError};
 use fabro_types::{MAX_RUN_TITLE_CHARS, RunGraph, RunId};
 use fabro_util::error;
@@ -57,8 +57,8 @@ pub(crate) async fn generate_title_or_current(input: GenerateTitleInput<'_>) -> 
         }
     };
 
-    let completion = match input
-        .client
+    let client = llm_client::for_run(&input.client, *input.prompt.run_id);
+    let completion = match client
         .complete_object(request, "run_title", title_response_schema())
         .await
     {
@@ -343,6 +343,7 @@ mod tests {
     }
 
     struct CapturedCall {
+        session_id:        String,
         provider:          String,
         model:             String,
         max_output_tokens: Option<u32>,
@@ -377,6 +378,7 @@ mod tests {
             },
         })
         .await;
+        assert_eq!(captured.lock().unwrap()[0].session_id, run_id.to_string());
         (title, captured)
     }
 
@@ -394,6 +396,10 @@ mod tests {
 
         async fn complete(&self, call: &ResolvedCall) -> Result<Response, LlmError> {
             self.captured.lock().unwrap().push(CapturedCall {
+                session_id:        call.context().default_headers()["x-session-id"]
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
                 provider:          call.route().provider().id().to_string(),
                 model:             call.route().model().id().to_string(),
                 max_output_tokens: call.request().max_output_tokens(),

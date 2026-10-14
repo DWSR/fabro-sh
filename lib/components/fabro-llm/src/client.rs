@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use fabro_types::RunId;
 use lithos_llm::adapter::ProviderAdapter;
 use lithos_llm::catalog::{Catalog, ProviderId};
 use lithos_llm::client::{Client, ClientBuildError, ClientBuilder, ProviderBuildIssue};
@@ -27,6 +28,14 @@ pub fn default_retry_policy() -> RetryPolicy {
         .initial_delay(Duration::from_millis(500))
         .max_delay(Duration::from_secs(5))
         .jitter(true)
+}
+
+/// Scope ancillary model calls to the same session as the run's native steps.
+#[must_use]
+pub fn for_run(client: &Client, run_id: RunId) -> Client {
+    client
+        .with_default_headers([("x-session-id", run_id.to_string())])
+        .expect("a run UUID is a valid HTTP header value")
 }
 
 /// One retry the lithos retry middleware decided on.

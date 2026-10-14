@@ -175,6 +175,7 @@ async fn attempt_pull_request_creation(
     };
     let catalog = state.catalog();
     let request = pull_request::OpenPullRequestRequest {
+        run_id: *run_id,
         github,
         origin_url: &inputs.normalized_origin,
         base_branch: inputs.base_branch,
