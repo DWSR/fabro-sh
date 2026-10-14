@@ -14,7 +14,7 @@ use fabro_api::types::{
     CreateRunSessionRequest, PaginatedSessionEventList, PaginationMeta, SubmitTurnRequest,
 };
 use fabro_llm::lithos_catalog::Catalog;
-use fabro_llm::{FabroClient, ModelSelectionError, selection};
+use fabro_llm::{FabroClient, ModelSelectionError, client as llm_client, selection};
 use fabro_redact::SecretRedactor;
 use fabro_store::{ProjectedRunSession, project_run_session, project_run_sessions};
 use fabro_tool::fabro_client::ClientBackend;
@@ -697,9 +697,10 @@ async fn build_agent(
     session: &ProjectedRunSession,
 ) -> Result<CodingAgent, AskFabroBuildError> {
     let catalog = state.catalog();
-    let llm_result = state.resolve_llm_client().await.map_err(|err| {
+    let mut llm_result = state.resolve_llm_client().await.map_err(|err| {
         AskFabroBuildError::LlmUnconfigured(format!("LLM credentials are not configured: {err}"))
     })?;
+    llm_result.client = llm_client::for_run(&llm_result.client, run_id);
     for (provider, issue) in &llm_result.auth_issues {
         warn!(provider = %provider, error = %issue, "LLM provider unavailable due to auth issue");
     }

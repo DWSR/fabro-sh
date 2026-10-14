@@ -18,7 +18,7 @@ use fabro_petri::check::Launch;
 use fabro_petri::engine::{self, RunStatus};
 use fabro_petri::runtime::{self, RuntimeSpec};
 use fabro_test::{TwinScenario, TwinScenarios, twin_openai};
-use fabro_types::SecretType;
+use fabro_types::{RunId, SecretType};
 use fabro_vault::Vault;
 use lithos_llm::catalog::ProviderId;
 use petri_store::MemoryRunStore;
@@ -105,4 +105,117 @@ async fn a_model_call_authenticates_through_the_vault_and_skills_read_the_home()
         resolved.to_string().contains(&configured),
         "the configured home is searched: {resolved}"
     );
+}
+
+/// The engine binds the durable identity for both native step kinds and both
+/// entry modes, without changing a shared client used outside a run.
+#[tokio::test]
+async fn model_session_headers_follow_run_identity_on_start_and_resume() {
+    use std::sync::Mutex;
+
+    use fabro_llm::test_support::{self, ScriptedAdapter};
+    use lithos_llm::Client;
+    use lithos_llm::middleware::{Call, Observer, ObserverMiddleware};
+    use petri_store::{Access, OwnerId, RunKey, RunStore as _};
+
+    struct Sessions(Arc<Mutex<Vec<Option<String>>>>);
+    impl Observer for Sessions {
+        fn on_start(&self, call: &Call) {
+            self.0.lock().unwrap().push(
+                call.context()
+                    .default_headers()
+                    .get("x-session-id")
+                    .map(|value| value.to_str().unwrap().to_owned()),
+            );
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let client = Client::builder()
+        .catalog(test_support::test_catalog())
+        .adapter(
+            ProviderId::new("openai"),
+            ScriptedAdapter::new(vec![test_support::text_response(
+                "openai",
+                OPENAI_MODEL,
+                "done",
+            )]),
+        )
+        .middleware(ObserverMiddleware::new(Sessions(Arc::clone(&seen))))
+        .build()
+        .unwrap()
+        .client;
+    let runtime = RuntimeSpec {
+        model_client: Some(client.clone()),
+        ..RuntimeSpec::default()
+    };
+    let workflow = r#"digraph Headers {
+        graph [backend="api", default_max_retries=0]
+        start [shape=Mdiamond]
+        exit [shape=Msquare]
+        agent [shape=box, prompt="Say done"]
+        prompt [shape=tab, prompt="Say done"]
+        start -> agent -> prompt -> exit
+    }"#;
+    for resume in [false, true] {
+        let run_id = RunId::new().to_string();
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(MemoryRunStore::new());
+        let graphs = support::admit(
+            &[
+                ("workflow.fabro", workflow),
+                ("workflow.toml", support::SETTINGS),
+            ],
+            Launch {
+                default_model: Some(format!("openai/{OPENAI_MODEL}")),
+                ..Launch::default()
+            },
+            &runtime,
+        );
+        let mut request = run_request(
+            &run_id,
+            root.path(),
+            graphs,
+            store.clone(),
+            runtime.clone(),
+            no_questions(Arc::new(Silent)),
+        );
+        if resume {
+            // Recover the same durable key after creation was interrupted.
+            drop(
+                store
+                    .open(&RunKey::new(&run_id), Access::Create {
+                        owner: OwnerId::new("interrupted"),
+                    })
+                    .await
+                    .unwrap(),
+            );
+            request.execution = match request.execution {
+                engine::Execution::Start(graphs) | engine::Execution::Resume(graphs) => {
+                    engine::Execution::Resume(graphs)
+                }
+            };
+        }
+        seen.lock().unwrap().clear();
+        let outcome = engine::run(request).await.unwrap();
+        assert_eq!(outcome.status, RunStatus::Success, "{outcome:?}");
+        let calls = seen.lock().unwrap();
+        assert!(calls.len() >= 2, "both native stages call the model");
+        assert!(
+            calls
+                .iter()
+                .all(|header| header.as_deref() == Some(&run_id))
+        );
+    }
+    seen.lock().unwrap().clear();
+    client
+        .complete(
+            fabro_llm::Request::builder()
+                .model(format!("openai/{OPENAI_MODEL}"))
+                .user("outside a run")
+                .build()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![None]);
 }

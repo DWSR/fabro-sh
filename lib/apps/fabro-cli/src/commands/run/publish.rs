@@ -245,6 +245,7 @@ impl GitHubPublisher {
         let run_state = self.client.get_run_state(&self.run_id).await.ok();
         let origin_url = self.repository.https_url();
         let created = pull_request::open_pull_request(OpenPullRequestRequest {
+            run_id:            self.run_id,
             github:            context,
             origin_url:        &origin_url,
             base_branch:       &self.base_branch,

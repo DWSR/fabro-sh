@@ -5,10 +5,12 @@ use std::time::Duration;
 use fabro_github::{self as github_app, ssh_url_to_https};
 use fabro_llm::credentials::CredentialProvider;
 use fabro_llm::lithos_catalog::Catalog;
-use fabro_llm::{Client, ClientOptions, Request, selection};
+use fabro_llm::{Client, ClientOptions, Request, client as llm_client, selection};
 use fabro_store::RunProjection;
 use fabro_types::settings::run::MergeStrategy;
-use fabro_types::{Conclusion, PullRequestLink, RunSpec, format_cost as outcome_format_cost};
+use fabro_types::{
+    Conclusion, PullRequestLink, RunId, RunSpec, format_cost as outcome_format_cost,
+};
 use fabro_util::text::strip_goal_decoration;
 use lithos_llm::catalog::ProviderId;
 use lithos_llm::types::{Cost, Message, Role};
@@ -297,6 +299,7 @@ fn assemble_pr_body(
 /// Build complete PR content by combining LLM-generated narrative with
 /// deterministic fallbacks and programmatic sections.
 pub async fn build_pr_content(
+    run_id: RunId,
     diff: &str,
     goal: &str,
     model: &str,
@@ -321,7 +324,7 @@ pub async fn build_pr_content(
         catalog.as_ref(),
         conclusion,
         run_state,
-        Arc::new(client),
+        Arc::new(llm_client::for_run(&client, run_id)),
     )
     .await
 }
@@ -402,6 +405,7 @@ pub struct AutoMergeOptions {
 
 /// Inputs for [`open_pull_request`].
 pub struct OpenPullRequestRequest<'a> {
+    pub run_id:            RunId,
     pub github:            github_app::GitHubContext<'a>,
     pub origin_url:        &'a str,
     pub base_branch:       &'a str,
@@ -564,6 +568,7 @@ pub async fn open_pull_request(
     }
 
     let content = build_pr_content(
+        req.run_id,
         req.diff,
         req.goal,
         req.model,
@@ -1076,12 +1081,14 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
 
     #[tokio::test]
     async fn build_pr_content_uses_vault_only_openai_codex_source() {
+        let run_id = RunId::new();
         let server = MockServer::start_async().await;
         let response_mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .path("/v1/responses")
-                    .header("authorization", "Bearer vault-openai-key");
+                    .header("authorization", "Bearer vault-openai-key")
+                    .header("x-session-id", run_id.to_string());
                 then.status(200)
                     .header("content-type", "application/json")
                     .json_body(openai_responses_payload(&pr_content_json(
@@ -1101,13 +1108,14 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
                 None,
             )
             .unwrap();
-        let llm_source: Arc<dyn CredentialProvider> = Arc::new(VaultCredentialSource::new(
+        let llm_source: Arc<dyn CredentialProvider> = Arc::new(VaultCredentialSource::vault_only(
             Arc::new(AsyncRwLock::new(vault)),
         ));
         // Use catalog settings to override base_url instead of env var
         let catalog = test_catalog_with_provider_base_url("openai", &server.url("/v1"));
 
         let PrContent { title, body } = build_pr_content(
+            run_id,
             "diff --git a/src/lib.rs b/src/lib.rs\n+fn new_feature() {}\n",
             "Implement feature",
             "gpt-5.4",
@@ -1265,6 +1273,7 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
         let harness = setup_fallback_test_harness_with_branch_sha(&payload, "stale-sha").await;
         let github_base_url = harness.github_server.url("");
         let error = open_pull_request(OpenPullRequestRequest {
+            run_id:            RunId::new(),
             github:            fabro_github::GitHubContext::new(&harness.creds, &github_base_url),
             origin_url:        "https://github.com/owner/repo.git",
             base_branch:       "main",
@@ -1547,6 +1556,7 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
         let github = github_app::GitHubContext::new(&harness.creds, &github_base_url);
 
         let result = open_pull_request(OpenPullRequestRequest {
+            run_id: RunId::new(),
             github,
             origin_url: "https://github.com/owner/repo.git",
             base_branch: "main",
@@ -1594,6 +1604,7 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
         let github = github_app::GitHubContext::new(&harness.creds, &github_base_url);
 
         let result = open_pull_request(OpenPullRequestRequest {
+            run_id: RunId::new(),
             github,
             origin_url: "https://github.com/owner/repo.git",
             base_branch: "main",
@@ -1630,6 +1641,7 @@ capabilities = { text = true, tools = true, response_format = { json_object = tr
         let goal = "x".repeat(200);
 
         let result = open_pull_request(OpenPullRequestRequest {
+            run_id: RunId::new(),
             github,
             origin_url: "https://github.com/owner/repo.git",
             base_branch: "main",

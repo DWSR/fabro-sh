@@ -11,7 +11,6 @@
 mod api_key_source;
 mod context;
 mod credential;
-mod extra_headers_source;
 mod refresh;
 mod secrets;
 mod sql_vault_source;
@@ -26,7 +25,6 @@ pub mod strategies;
 pub use api_key_source::ApiKeyCredentialSource;
 pub use context::{AuthContextRequest, AuthContextResponse};
 pub use credential::{OAuthConfig, OAuthCredential, OAuthTokens};
-pub use extra_headers_source::ExtraHeadersCredentialSource;
 pub use refresh::refresh_oauth_credential;
 pub use secrets::{accepts_api_key, expected_secret_name, secret_names};
 pub use sql_vault_source::SqlVaultCredentialSource;
