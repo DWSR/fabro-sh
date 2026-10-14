@@ -130,3 +130,4 @@ lib/apps/fabro-cli/tests/it/workflow/fixtures/human_gate.fabro: HumanGate nodes=
   goal-inline
   inline@draft
   inline@revise
+lib/apps/fabro-cli/tests/it/workflow/fixtures/stall.fabro: Stall nodes=3 edges=2

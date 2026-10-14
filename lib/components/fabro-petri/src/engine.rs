@@ -65,6 +65,7 @@ use fabro_types::{FailureReason, RunId, SandboxProviderKind};
 use fabro_util::sync;
 use petri_execution::host::{self, HostError, HostRun};
 use petri_execution::inspect::{self, InspectError, RunInspection};
+use petri_execution::watchdog::{StallWatchdog, WatchdogTask};
 use petri_execution::{
     Access, CancelReason, CoordinatorError, ExecutionObserver, InterviewDispatcher, Interviewer,
     RECEIPT_FILE, RunKey, RunStore,
@@ -76,8 +77,8 @@ use petri_runtime::executor::SecretProvider;
 use petri_runtime::{DaytonaResources, LostSandbox, RunOptions, Runtime, SandboxBackend};
 use sandbox_driver::NetworkPolicy;
 use tokio::fs;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info, warn};
 
 use crate::admission::AdmittedGraphs;
@@ -151,7 +152,8 @@ pub enum RunStatus {
 #[derive(Clone, Debug)]
 pub struct RunOutcome {
     pub status:         RunStatus,
-    /// Required-finalization failure detail, or the root execution's failure.
+    /// Required-finalization failure, stall cancellation, or root execution
+    /// failure.
     pub failure:        Option<String>,
     /// Whether the record is whole: the run recorded its finish and every
     /// log replays byte for byte.
@@ -224,6 +226,25 @@ pub async fn run(request: RunRequest) -> Result<RunOutcome, RunError> {
         })?
     };
     let key = RunKey::new(request.run_id.as_str());
+    let stall_timeout = match &request.execution {
+        Execution::Start(graphs) => graphs.graph.policy.stall_timeout,
+        Execution::Resume(graphs) => {
+            let logs = request
+                .store
+                .open(&key, Access::Read)
+                .await
+                .map_err(RunError::Open)?;
+            // A persisted disabled policy stays disabled. Only a run with no
+            // root yet uses the graph that the resume-to-start fallback runs.
+            host::stored_root_graph(&*logs)
+                .await
+                .map_err(RunError::Read)?
+                .map_or(graphs.graph.policy.stall_timeout, |graph| {
+                    graph.policy.stall_timeout
+                })
+        }
+    };
+    let watchdog = stall_timeout.map(StallWatchdog::new);
     let mut options = RunOptions::new(&request.run_dir);
     options.run_key = Some(key.clone());
     options.retention = RETENTION;
@@ -294,29 +315,37 @@ pub async fn run(request: RunRequest) -> Result<RunOutcome, RunError> {
         .capability(controls.turns());
 
     let dispatcher = InterviewDispatcher::new(request.interviewer);
-    let cancel_task: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+    let cancel_task: Mutex<Option<AbortOnDropHandle<()>>> = Mutex::new(None);
+    let watchdog_task: Mutex<Option<WatchdogTask>> = Mutex::new(None);
     // What the coordinator's handle is wired to, on a start and a resume
     // alike: built again when a resume starts the run over.
     let wiring = || {
         let cancel = request.cancel.clone();
         let (dispatcher, fabro_hooks, controls, cancel_task) =
             (&dispatcher, &fabro_hooks, &controls, &cancel_task);
+        let (watchdog, watchdog_task) = (&watchdog, &watchdog_task);
         move |handle: petri_execution::CoordinatorHandle, secrets| {
             dispatcher.wire(handle.clone(), secrets);
             if let Some(hooks) = fabro_hooks {
                 hooks.attach(handle.clone());
             }
             controls.wire(handle.clone());
-            *sync::lock(cancel_task) = Some(tokio::spawn(async move {
+            if let Some(watchdog) = watchdog {
+                *sync::lock(watchdog_task) = Some(watchdog.start(handle.clone()));
+            }
+            *sync::lock(cancel_task) = Some(AbortOnDropHandle::new(tokio::spawn(async move {
                 cancel.cancelled().await;
                 info!("cancelling the Petri run");
                 handle.cancel_root_for(CancelReason::Control);
-            }));
+            })));
         }
     };
     let mut observers = request.observers;
     observers.push(controls.observer());
     observers.push(Arc::new(dispatcher.clone()));
+    if let Some(watchdog) = &watchdog {
+        observers.push(Arc::new(watchdog.clone()));
+    }
     let result = match request.execution {
         Execution::Start(graphs) => {
             info!(run_id = %request.run_id, backend = %backend, "Starting Petri run");
@@ -346,8 +375,14 @@ pub async fn run(request: RunRequest) -> Result<RunOutcome, RunError> {
             }
         }
     };
-    if let Some(task) = sync::lock(&cancel_task).take() {
+    let watchdog_task = sync::lock(&watchdog_task).take();
+    if let Some(task) = watchdog_task {
+        task.stop().await;
+    }
+    let cancel_task = sync::lock(&cancel_task).take();
+    if let Some(task) = cancel_task {
         task.abort();
+        let _ = task.await;
     }
     let receipt = dispatcher.shutdown().await;
     write_receipt(&request.run_dir, &receipt).await;
@@ -442,8 +477,8 @@ pub fn conclusion(result: &Result<RunOutcome, RunError>) -> Conclusion {
 /// The failure of a run whose record says it did not succeed.
 fn failure_message(outcome: &RunOutcome) -> String {
     let mut message = match (&outcome.status, &outcome.failure) {
-        (RunStatus::Cancelled, _) => "the run was cancelled".to_string(),
         (_, Some(failure)) => failure.clone(),
+        (RunStatus::Cancelled, None) => "the run was cancelled".to_string(),
         (RunStatus::Failed, None) => "the run failed".to_string(),
         (RunStatus::Success, None) => "the run's record is incomplete".to_string(),
     };
@@ -560,9 +595,14 @@ fn outcome(
         .invocations
         .iter()
         .find(|invocation| invocation.invocation == inspection.root.invocation)
-        .and_then(|root| root.result.as_ref())
-        .and_then(|result| result.failure.as_ref())
-        .map(|failure| failure.message.clone());
+        .and_then(|root| {
+            projection::stall_message(root.cancel_reason.as_ref()).or_else(|| {
+                root.result
+                    .as_ref()
+                    .and_then(|result| result.failure.as_ref())
+                    .map(|failure| failure.message.clone())
+            })
+        });
     let failure = inspection
         .finalization_failure
         .map(|failure| failure.message)

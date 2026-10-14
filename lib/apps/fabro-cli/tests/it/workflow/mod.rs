@@ -14,6 +14,7 @@ mod dry_run_examples;
 mod full_stack;
 mod hooks;
 mod human_gate;
+mod stall;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
