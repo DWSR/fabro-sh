@@ -1,0 +1,7 @@
+digraph Stall {
+    graph [stall_timeout="1s"]
+    start [shape=Mdiamond]
+    work [shape=parallelogram, script="sleep 5; echo done", timeout="10s"]
+    exit [shape=Msquare]
+    start -> work -> exit
+}

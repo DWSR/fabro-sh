@@ -2540,6 +2540,7 @@ dependencies = [
  "fabro-util",
  "fabro-vault",
  "fabro-workflow",
+ "futures-util",
  "httpmock",
  "lithos-llm",
  "object_store",

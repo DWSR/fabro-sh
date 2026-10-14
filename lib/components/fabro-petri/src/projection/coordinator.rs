@@ -7,8 +7,8 @@ use fabro_types::{
     Conclusion, FailureCategory, FailureDetail, FailureReason, RunControlAction, RunFailure,
     RunSandbox, RunStatus, RunTiming, StageOutcome, StartRecord, SuccessReason, usage_rollup,
 };
-use petri_execution::CoordinatorEvent;
 use petri_execution::events::RunEvent;
+use petri_execution::{CancelReason, CoordinatorEvent};
 use petri_runtime::ir::FinalizationFailure;
 
 use super::{FiringKey, InvocationRef, RunView, apply_status, settle_control};
@@ -127,9 +127,14 @@ impl RunView {
                     }
                 }
             }
+            CoordinatorEvent::InvocationCancelRequested { invocation, reason } => {
+                let info = self.state.invocations.entry(invocation.raw()).or_default();
+                if info.cancel_reason.is_none() {
+                    info.cancel_reason.clone_from(reason);
+                }
+            }
             CoordinatorEvent::GraphRegistered { .. }
             | CoordinatorEvent::ExecutionFinished { .. }
-            | CoordinatorEvent::InvocationCancelRequested { .. }
             | CoordinatorEvent::RunNoteRecorded { .. } => {}
         }
     }
@@ -154,6 +159,7 @@ impl RunView {
             .and_then(|root| self.state.invocations.get(&root));
         let failure_message = finalization_failure
             .map(|failure| failure.message.clone())
+            .or_else(|| root.and_then(|root| stall_message(root.cancel_reason.as_ref())))
             .or_else(|| root.and_then(|root| root.failure.clone()));
         let run_status = finished_status(status, finalization_failure);
         let (outcome, failure) = match run_status {
@@ -261,6 +267,19 @@ fn branch_slot(slot: &str) -> Option<(u64, u32)> {
     let index = parts.next()?.parse::<u32>().ok()?;
     let firing = fork.rsplit_once('@')?.1.parse::<u64>().ok()?;
     Some((firing, index))
+}
+
+/// Render the durable watchdog reason consistently for the worker and API.
+pub(crate) fn stall_message(reason: Option<&CancelReason>) -> Option<String> {
+    match reason {
+        Some(CancelReason::StallTimeout {
+            stall_timeout_ms,
+            idle_ms,
+        }) => Some(format!(
+            "the run was cancelled after {idle_ms} ms without execution activity (stall timeout: {stall_timeout_ms} ms)"
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

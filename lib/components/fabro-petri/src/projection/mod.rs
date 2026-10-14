@@ -37,7 +37,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, TimeZone as _, Utc};
-pub(crate) use coordinator::finished_status;
+pub(crate) use coordinator::{finished_status, stall_message};
 use fabro_store::StagePosition;
 use fabro_store::platform_records::StoredPlatformRecord;
 use fabro_types::{
@@ -45,7 +45,7 @@ use fabro_types::{
     StageProjection,
 };
 use petri_execution::events::{NodeRef, RunEvent, Subject};
-use petri_execution::{CoordinatorEvent, CoordinatorRecord, ExecutionId};
+use petri_execution::{CancelReason, CoordinatorEvent, CoordinatorRecord, ExecutionId};
 use petri_runtime::ir::FinalizationFailure;
 use petri_store::Record;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -76,17 +76,20 @@ pub struct StageRef {
 /// What the fold knows about one invocation.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct InvocationRef {
+    /// The first recorded reason for cancelling this invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_reason: Option<CancelReason>,
     /// The calling execution and firing, for a nested invocation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent:  Option<(u64, u64)>,
+    pub parent:        Option<(u64, u64)>,
     /// The parallel group and branch index, for a branch child.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch:  Option<(StageId, u32)>,
+    pub branch:        Option<(StageId, u32)>,
     /// The result the invocation recorded, for the root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<String>,
+    pub failure:       Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output:  Option<Value>,
+    pub output:        Option<Value>,
 }
 
 /// Whether the run's durable record is whole, as the projector last read it.

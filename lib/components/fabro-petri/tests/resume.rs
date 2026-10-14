@@ -11,10 +11,12 @@ use fabro_petri::admission::AdmittedGraphs;
 use fabro_petri::check::Launch;
 use fabro_petri::engine::{self, Conclusion, Execution, RunError, RunStatus};
 use fabro_petri::runtime::RuntimeSpec;
+use petri_execution::{CancelReason, InvocationId, host};
 use petri_store::{
     Access, Digest, LogId, MemoryRunStore, OwnerId, Record, RunKey, RunLogs, RunStore, StoreError,
 };
 use support::{SETTINGS, Silent, admit, all_records, no_questions, run_request};
+use tokio::runtime::Handle;
 
 /// One command stage between start and exit.
 const COMMAND: &str = r#"digraph Command {
@@ -201,4 +203,93 @@ impl RunLogs for FailingLogs {
     async fn get_blob(&self, digest: Digest) -> Result<Option<Vec<u8>>, StoreError> {
         self.inner.get_blob(digest).await
     }
+}
+
+#[tokio::test]
+async fn resume_uses_the_persisted_stall_budget_not_the_fallback_graph() {
+    resumed_stall_policy("1s", "0s", RunStatus::Cancelled).await;
+}
+
+#[tokio::test]
+async fn resume_preserves_a_persisted_disabled_stall_budget() {
+    resumed_stall_policy("0s", "1s", RunStatus::Success).await;
+}
+
+async fn resumed_stall_policy(persisted: &str, fallback: &str, expected: RunStatus) {
+    let root = tempfile::tempdir().expect("a temporary run directory");
+    let memory = Arc::new(MemoryRunStore::new());
+    let runtime = RuntimeSpec::default();
+    let graphs = |budget| {
+        admit(
+            &[
+                (
+                    "workflow.fabro",
+                    &format!(
+                        r#"digraph Resume {{
+            graph [stall_timeout="{budget}"]
+            start [shape=Mdiamond]
+            work [shape=parallelogram, script="sleep 2", timeout="10s"]
+            exit [shape=Msquare]
+            start -> work -> exit
+        }}"#
+                    ),
+                ),
+                ("workflow.toml", SETTINGS),
+            ],
+            Launch::default(),
+            &runtime,
+        )
+    };
+    // Fail after the root graph is durable but before acquiring a workspace.
+    // This exercises cleanup on host error and a genuine persisted resume.
+    let failing = Arc::new(FailingStore {
+        inner:    memory.clone(),
+        log:      LogId::Resources,
+        appended: Arc::new(AtomicUsize::new(0)),
+    });
+    let first = engine::run(run_request(
+        "stall-resume",
+        root.path(),
+        graphs(persisted),
+        failing,
+        runtime.clone(),
+        no_questions(Arc::new(Silent)),
+    ))
+    .await;
+    assert!(matches!(first, Err(RunError::StoreFailed(_))), "{first:?}");
+    let metrics = Handle::current().metrics();
+    support::wait_until("error cleanup", || metrics.num_alive_tasks() == 0).await;
+    let outcome = engine::run(resume_request(
+        "stall-resume",
+        root.path(),
+        graphs(fallback),
+        memory.clone(),
+        runtime,
+    ))
+    .await
+    .expect("the resumed run completes");
+    assert_eq!(outcome.status, expected, "{outcome:?}");
+    let logs = memory
+        .open(&RunKey::new("stall-resume"), Access::Read)
+        .await
+        .expect("the resumed record opens");
+    let state = host::stored_state(&*logs)
+        .await
+        .expect("the stored coordinator state replays");
+    let reason = &state.invocations[&InvocationId::ROOT].cancel_reason;
+    if expected == RunStatus::Cancelled {
+        assert!(
+            matches!(
+                reason,
+                Some(CancelReason::StallTimeout {
+                    stall_timeout_ms: 1000,
+                    ..
+                })
+            ),
+            "{reason:?}"
+        );
+    } else {
+        assert_eq!(*reason, None);
+    }
+    support::wait_until("resume cleanup", || metrics.num_alive_tasks() == 0).await;
 }
