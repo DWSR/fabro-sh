@@ -255,6 +255,7 @@ const RunFileRow = memo(function RunFileRow({
   const oldPath = file.old_file.name || display;
   const newPath = file.new_file.name || display;
   const canPreviewMarkdown =
+    file.change_kind !== "deleted" &&
     /\.md$/i.test(newPath) && newContents != null && !placeholder;
   const [showMarkdownPreview, setShowMarkdownPreview] =
     useState(canPreviewMarkdown);
