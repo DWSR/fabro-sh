@@ -509,3 +509,87 @@ async fn docker_failed_cleanup_preserves_success_across_server_restarts() {
     .await;
     server.shutdown();
 }
+
+/// Remove the disposable run's container even if its regression fails.
+struct WorkerCrashContainer(String);
+
+impl Drop for WorkerCrashContainer {
+    fn drop(&mut self) {
+        cleanup(&self.0);
+    }
+}
+
+/// A worker-only crash leaves the server responsible for terminal cleanup.
+/// The keep-running control must not be stopped by that supervisor backstop.
+#[tokio::test(flavor = "multi_thread")]
+async fn worker_crash_honors_the_docker_stop_policy_and_retains_files() {
+    if !fabro_test::docker_available() {
+        return;
+    }
+    for stop_on_terminal in [true, false] {
+        let context = test_context!();
+        let server = docker_server().await;
+        let workspace = write_petri_workflow(
+            &context,
+            "digraph Cleanup { start [shape=Mdiamond]; exit [shape=Msquare]; \
+             work [shape=parallelogram, script=\"printf retained > retained.txt\"]; \
+             gate [shape=hexagon, label=\"Continue?\"]; \
+             start -> work -> gate; gate -> exit [label=\"[A] Continue\"]; }",
+        );
+        // Workflow configuration is public input, above the catalog default.
+        let config = workspace.join("workflow.toml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(
+            &config,
+            format!("{text}\n[run.environment.lifecycle]\nstop_on_terminal = {stop_on_terminal}\n"),
+        )
+        .unwrap();
+        let run_id = run_detached_in(&context, &server, &workspace, ENVIRONMENT, &[]);
+        let _container_cleanup = WorkerCrashContainer(run_id.clone());
+        let gate_deadline = std::time::Instant::now() + std::time::Duration::from_mins(1);
+        while super::petri::questions(&server, &run_id).await.is_empty() {
+            let run = run_json(&server, &format!("runs/{run_id}")).await;
+            assert!(
+                run["lifecycle"]["status"]["kind"] != "failed"
+                    && run["lifecycle"]["status"]["kind"] != "succeeded"
+                    && std::time::Instant::now() < gate_deadline,
+                "the fixture did not reach its human gate: {run}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let container = container_of(&run_id).expect("the gated run has a container");
+        let worker = wait_for_worker(&run_id);
+        fabro_proc::sigkill(worker);
+        wait_for_status(&server, &run_id, &["failed"]).await;
+
+        // Usage is counted after the supervisor finishes handling the exit,
+        // so a keep-running assertion cannot race a pending cleanup task.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+        while run_json(&server, "usage").await["totals"]["runs"].as_u64() != Some(1) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker exit did not settle"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let output = Command::new("docker")
+            .args(["inspect", "--format", "{{.State.Running}}", &container])
+            .output()
+            .expect("inspect runs");
+        assert!(output.status.success(), "the container is retained");
+        let running = String::from_utf8_lossy(&output.stdout).trim() == "true";
+        // docker cp also reads a stopped container without activating it.
+        let retained = context.temp_dir.join("retained.txt");
+        let copied = Command::new("docker")
+            .args(["cp", &format!("{container}:/workspace/retained.txt")])
+            .arg(&retained)
+            .status()
+            .expect("docker cp runs");
+        let contents = std::fs::read_to_string(&retained);
+        cleanup(&run_id);
+        server.shutdown();
+        assert_eq!(running, !stop_on_terminal);
+        assert!(copied.success());
+        assert_eq!(contents.unwrap(), "retained");
+    }
+}

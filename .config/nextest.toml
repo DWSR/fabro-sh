@@ -3,6 +3,11 @@
 slow-timeout = { period = "1s", terminate-after = 3 }
 leak-timeout = "500ms"
 
+    # Real Docker worker crashes wait for supervisor cleanup and retain files.
+    [[profile.default.overrides]]
+    filter = "package(fabro-cli) & test(worker_crash_honors_the_docker_stop_policy_and_retains_files)"
+    slow-timeout = { period = "30s", terminate-after = 3 }
+
     [[profile.default.overrides]]
     filter = "package(fabro-cli)"
     slow-timeout = { period = "6s", terminate-after = 4 }
