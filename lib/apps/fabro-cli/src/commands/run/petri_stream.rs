@@ -1325,4 +1325,17 @@ mod tests {
         assert_eq!(value["kind"], "platform");
         assert_eq!(value["item"]["record"]["kind"], "run.notice");
     }
+
+    #[test]
+    fn redacted_raw_lines_keep_the_typed_run_id() {
+        let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
+        let mut event = petri(1, json!({"record": {"body": {"value": run_id}}}));
+        event.run_id = run_id.parse().expect("a valid run ID");
+
+        let line = raw_line(&event).expect("a redacted line");
+        let decoded: RunStreamItem = serde_json::from_str(&line).expect("a valid stream item");
+        assert_eq!(decoded.run_id, event.run_id);
+        assert_eq!(decoded.stream_seq, event.stream_seq);
+        assert_eq!(decoded.item["record"]["body"]["value"], "REDACTED");
+    }
 }
