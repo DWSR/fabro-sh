@@ -34,6 +34,7 @@ use anyhow::Context as _;
 use fabro_config::Storage;
 use fabro_petri::providers;
 pub(crate) use fabro_petri::providers::DaytonaCredentials;
+use fabro_types::settings::run::RunEnvironmentSettings;
 use fabro_types::settings::server::{
     SandboxPluginSettings, ServerSandboxProviderSettings, ServerSandboxProvidersSettings,
 };
@@ -268,6 +269,60 @@ async fn attach_run_sandbox_on(
         .attach(&id, None)
         .await
         .with_context(|| format!("Failed to reconnect {kind} sandbox '{sandbox_id}'"))
+}
+
+/// Stop the sandboxes an exited worker can no longer release. This is a
+/// supervisor backstop, not a deletion: the workspace and Petri's lease
+/// records remain available for inspection, recovery and later pruning.
+/// Local process cleanup belongs to the Host provider's worker guardian.
+pub(crate) async fn stop_run_sandboxes(
+    access: &ProviderAccess,
+    environment: &RunEnvironmentSettings,
+    run_id: RunId,
+) -> anyhow::Result<()> {
+    if !environment.lifecycle.stop_on_terminal
+        || environment.provider.bundled() == Some(BundledProvider::Local)
+    {
+        return Ok(());
+    }
+    let provider = connect_provider(&environment.provider, access).await?;
+    stop_run_sandboxes_on(provider, run_id).await
+}
+
+async fn stop_run_sandboxes_on(
+    provider: Arc<dyn SandboxProvider>,
+    run_id: RunId,
+) -> anyhow::Result<()> {
+    // Listing also finds a container whose create completed just before the
+    // worker died without recording its id, and every nested scope. Both
+    // list and attach verify ownership, so unrelated resources stay alone.
+    let provider = OwnedProvider::new(provider, run_ownership(run_id));
+    let sandboxes = provider
+        .list(&SandboxFilter::default())
+        .await
+        .context("Failed to list the exited worker's sandboxes")?;
+    let results =
+        join_all(sandboxes.into_iter().map(|status| {
+            let provider = &provider;
+            async move {
+                let result = match provider.attach(&status.id, None).await {
+                    Ok(sandbox) => sandbox.stop().await,
+                    Err(error) => Err(error),
+                };
+                match result {
+                    // A concurrent run deletion already cleaned it up.
+                    Ok(()) | Err(DriverError::NotFound { .. }) => Ok(()),
+                    Err(error) => Err(anyhow::Error::new(error)
+                        .context("Failed to stop an exited worker's sandbox")),
+                }
+            }
+        }))
+        .await;
+    // Every owned sandbox gets its stop attempt even if one fails.
+    for result in results {
+        result?;
+    }
+    Ok(())
 }
 
 /// Attaches to a run's host sandbox: the managed directory the record
@@ -859,6 +914,54 @@ mod tests {
         assert!(!ownership.owns(&labels));
         labels.insert("petri.run".to_string(), run_id.to_string());
         assert!(ownership.owns(&labels));
+    }
+
+    #[tokio::test]
+    async fn worker_cleanup_stops_all_owned_sandboxes_without_deleting_their_data() {
+        let run_id = RunId::new();
+        let mine = petri_scripted_sandbox("root", &run_id.to_string());
+        let nested = petri_scripted_sandbox("nested", &run_id.to_string());
+        let theirs = petri_scripted_sandbox("foreign", &RunId::new().to_string());
+        let unlabelled = Arc::new(ScriptedSandbox::new());
+        mine.fs().write("retained", b"keep me").await.unwrap();
+        let provider = scripted_provider("docker", vec![
+            Arc::clone(&mine),
+            Arc::clone(&nested),
+            Arc::clone(&theirs),
+            Arc::clone(&unlabelled),
+        ]);
+
+        stop_run_sandboxes_on(provider, run_id).await.unwrap();
+
+        for sandbox in [&mine, &nested] {
+            assert_eq!(sandbox.current_state(), SandboxState::Stopped);
+            assert_eq!(sandbox.delete_count(), 0);
+            assert_eq!(sandbox.start_count(), 0);
+        }
+        assert_eq!(mine.fs().read("retained").await.unwrap(), b"keep me");
+        for sandbox in [&theirs, &unlabelled] {
+            assert_eq!(sandbox.current_state(), SandboxState::Running);
+            assert_eq!(sandbox.stop_count(), 0);
+            assert_eq!(sandbox.delete_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_cleanup_skips_keep_running_and_host_environments() {
+        // This plugin cannot connect: skipping the policy must happen first.
+        let provider = kind("unreachable-cleanup");
+        let access = unreachable_plugin_access(provider.as_str());
+        let mut environment = RunEnvironmentSettings {
+            provider,
+            ..RunEnvironmentSettings::default()
+        };
+        environment.lifecycle.stop_on_terminal = false;
+        stop_run_sandboxes(&access, &environment, RunId::new())
+            .await
+            .unwrap();
+        stop_run_sandboxes(&access, &RunEnvironmentSettings::default(), RunId::new())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
