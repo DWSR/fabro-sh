@@ -39,6 +39,12 @@ export function parseCreatableProvider(value: string | null): string {
 // Environment ids are server-managed file names: lowercase, digits, hyphens.
 const ENVIRONMENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+// Sliders select values within these ranges; loaded API values remain intact
+// until the user moves that resource's slider.
+const CPU = { min: 1, max: 8, step: 1, default: 4 };
+const MEMORY = { min: 1, max: 16, step: 1, default: 8 };
+const DISK = { min: 1, max: 20, step: 1, default: 16 };
+
 // An environment image comes from exactly one source: a prebuilt image
 // reference or an inline Dockerfile. The form keeps both field values around so
 // switching back and forth doesn't lose typed text, and this discriminator
@@ -51,10 +57,9 @@ export interface EnvironmentFormValues {
   imageSource: ImageSource;
   dockerRef: string;
   dockerfile: string;
-  // Keep API resource values intact; blank size inputs represent provider defaults.
   cpu: number | null;
-  memory: string;
-  disk: string;
+  memory: string | null;
+  disk: string | null;
   blockNetwork: boolean;
   preserve: boolean;
   stopOnTerminal: boolean;
@@ -72,9 +77,9 @@ export const EMPTY_ENVIRONMENT_FORM: EnvironmentFormValues = {
   imageSource:    "image",
   dockerRef:      "",
   dockerfile:     "",
-  cpu:            4,
-  memory:         "8GB",
-  disk:           "16GB",
+  cpu:            CPU.default,
+  memory:         `${MEMORY.default}GB`,
+  disk:           `${DISK.default}GB`,
   blockNetwork:   false,
   preserve:       false,
   stopOnTerminal: true,
@@ -91,8 +96,8 @@ export function environmentToFormValues(environment: Environment): EnvironmentFo
     dockerRef:      environment.image.docker ?? "",
     dockerfile:     environment.image.dockerfile?.value ?? "",
     cpu:            environment.resources.cpu,
-    memory:         environment.resources.memory ?? "",
-    disk:           environment.resources.disk ?? "",
+    memory:         environment.resources.memory,
+    disk:           environment.resources.disk,
     blockNetwork:   environment.network.mode === EnvironmentNetworkMode.BLOCK,
     preserve:       environment.lifecycle.preserve,
     stopOnTerminal: environment.lifecycle.stop_on_terminal,
@@ -164,9 +169,42 @@ function imageFromForm(values: EnvironmentFormValues): EnvironmentApiImageSettin
 function resourcesFromForm(values: EnvironmentFormValues): EnvironmentResourcesSettings {
   return {
     cpu:    values.cpu,
-    memory: values.memory.trim() || null,
-    disk:   values.disk.trim() || null,
+    memory: values.memory,
+    disk:   values.disk,
   };
+}
+
+interface ResourceRange {
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+}
+
+// Project values onto the slider for display only. Never serialize this
+// rounded/clamped position unless the user explicitly changes the slider.
+function clampGb(value: number | null, range: ResourceRange): number {
+  if (value === null) return range.default;
+  return Math.min(range.max, Math.max(range.min, Math.round(value)));
+}
+
+// Parse a size string ("16GB", "512MiB", or a bare integer interpreted as GB)
+// into whole GB within the slider range. Existing values may use other units or
+// fall outside the range, so the result is rounded and clamped.
+function parseGb(value: string | null, range: ResourceRange): number {
+  if (value === null) return range.default;
+  const match = value.trim().match(/^([\d.]+)\s*([a-zA-Z]*)$/);
+  if (!match) return range.default;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return range.default;
+  const perGb: { [unit: string]: number } = {
+    "": 1, g: 1, gb: 1, gib: 1024 ** 3 / 1e9,
+    b: 1 / 1e9, k: 1e-6, kb: 1e-6, kib: 1024 / 1e9,
+    m: 1 / 1000, mb: 1 / 1000, mib: 1024 ** 2 / 1e9,
+    t: 1000, tb: 1000, tib: 1024 ** 4 / 1e9,
+  };
+  const factor = perGb[match[2].toLowerCase()] ?? 1;
+  return clampGb(amount * factor, range);
 }
 
 function networkFromForm(values: EnvironmentFormValues): EnvironmentNetworkSettings {
@@ -281,42 +319,31 @@ export function EnvironmentFormFields({
       </Panel>
 
       <Panel title="Resources">
-        <Row title={<Label optional>CPU</Label>} help="Number of vCPUs allocated to each run. Leave blank for the provider default.">
-          <input
-            type="number"
-            name="cpu"
-            aria-label="CPU"
-            step={1}
-            value={values.cpu ?? ""}
-            onChange={(e) => patch({ cpu: e.target.value === "" ? null : Number(e.target.value) })}
-            placeholder="Provider default"
-            className={`${INPUT_CLASS} font-mono`}
+        <Row title="CPU" help="Number of vCPUs allocated to each run.">
+          <ResourceSlider
+            ariaLabel="CPU"
+            range={CPU}
+            value={clampGb(values.cpu, CPU)}
+            onChange={(cpu) => patch({ cpu })}
+            displayValue={values.cpu === null ? "Provider default" : `${values.cpu} CPU`}
           />
         </Row>
-        <Row title={<Label optional>Memory</Label>} help="Memory limit, including units (e.g. 512MiB or 4GB). Leave blank for the provider default.">
-          <input
-            type="text"
-            name="memory"
-            aria-label="Memory"
-            value={values.memory}
-            onChange={(e) => patch({ memory: e.target.value })}
-            placeholder="Provider default"
-            autoComplete="off"
-            spellCheck={false}
-            className={`${INPUT_CLASS} font-mono`}
+        <Row title="Memory" help="Memory limit for each run.">
+          <ResourceSlider
+            ariaLabel="Memory"
+            range={MEMORY}
+            value={parseGb(values.memory, MEMORY)}
+            onChange={(memory) => patch({ memory: `${memory}GB` })}
+            displayValue={values.memory?.replace(/GB$/, " GB") ?? "Provider default"}
           />
         </Row>
-        <Row title={<Label optional>Disk</Label>} help="Disk limit, including units (e.g. 8GB). Leave blank for the provider default.">
-          <input
-            type="text"
-            name="disk"
-            aria-label="Disk"
-            value={values.disk}
-            onChange={(e) => patch({ disk: e.target.value })}
-            placeholder="Provider default"
-            autoComplete="off"
-            spellCheck={false}
-            className={`${INPUT_CLASS} font-mono`}
+        <Row title="Disk" help="Disk limit for each run.">
+          <ResourceSlider
+            ariaLabel="Disk"
+            range={DISK}
+            value={parseGb(values.disk, DISK)}
+            onChange={(disk) => patch({ disk: `${disk}GB` })}
+            displayValue={values.disk?.replace(/GB$/, " GB") ?? "Provider default"}
           />
         </Row>
       </Panel>
@@ -396,6 +423,45 @@ export function EnvironmentFormFields({
         </p>
       ) : null}
     </>
+  );
+}
+
+function ResourceSlider({
+  value,
+  range,
+  ariaLabel,
+  displayValue,
+  onChange,
+}: {
+  value: number;
+  range: ResourceRange;
+  ariaLabel: string;
+  displayValue: string;
+  onChange: (value: number) => void;
+}) {
+  const fill = ((value - range.min) / (range.max - range.min)) * 100;
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative h-4 flex-1">
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-overlay-strong">
+          <div className="h-full rounded-full bg-teal-500" style={{ width: `${fill}%` }} />
+        </div>
+        <input
+          type="range"
+          aria-label={ariaLabel}
+          aria-valuetext={displayValue}
+          value={value}
+          min={range.min}
+          max={range.max}
+          step={range.step}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="relative h-4 w-full cursor-pointer appearance-none bg-transparent focus-visible:outline-none [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-fg [&::-moz-range-thumb]:shadow-sm [&::-moz-range-track]:h-1.5 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:-mt-[5px] [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-fg [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:outline [&::-webkit-slider-thumb]:outline-1 [&::-webkit-slider-thumb]:-outline-offset-1 [&::-webkit-slider-thumb]:outline-line-strong focus-visible:[&::-webkit-slider-thumb]:outline-2 focus-visible:[&::-webkit-slider-thumb]:outline-teal-500"
+        />
+      </div>
+      <output className="min-w-16 shrink-0 text-right font-mono text-sm tabular-nums text-fg">
+        {displayValue}
+      </output>
+    </div>
   );
 }
 

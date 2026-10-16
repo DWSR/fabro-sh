@@ -109,21 +109,15 @@ describe("environment resource round trips", () => {
 
   test("editing one resource preserves the other resources", () => {
     const values = environmentToFormValues(environment(cases[0]));
-    expect(replaceRequestFromForm({ ...values, cpu: 16 }).resources).toEqual({
-      ...cases[0], cpu: 16,
+    expect(replaceRequestFromForm({ ...values, cpu: 6 }).resources).toEqual({
+      ...cases[0], cpu: 6,
     });
-    expect(replaceRequestFromForm({ ...values, memory: "768MiB" }).resources).toEqual({
-      ...cases[0], memory: "768MiB",
+    expect(replaceRequestFromForm({ ...values, memory: "6GB" }).resources).toEqual({
+      ...cases[0], memory: "6GB",
     });
-    expect(replaceRequestFromForm({ ...values, disk: "32GB" }).resources).toEqual({
-      ...cases[0], disk: "32GB",
+    expect(replaceRequestFromForm({ ...values, disk: "12GB" }).resources).toEqual({
+      ...cases[0], disk: "12GB",
     });
-  });
-
-  test("clearing resources restores provider defaults", () => {
-    const values = environmentToFormValues(environment(cases[1]));
-    expect(replaceRequestFromForm({ ...values, cpu: null, memory: "", disk: "  " }).resources)
-      .toEqual({ cpu: null, memory: null, disk: null });
   });
 
   test("new environments keep the existing resource defaults", () => {
@@ -132,7 +126,7 @@ describe("environment resource round trips", () => {
   });
 });
 
-test("resource inputs display API values and preserve them through user edits", () => {
+test("sliders preserve loaded resources until that specific slider changes", () => {
   const cleanup = setupReactTestEnv();
   let renderer: TestRenderer.ReactTestRenderer | undefined;
   let saved: ReturnType<typeof replaceRequestFromForm> | undefined;
@@ -146,20 +140,28 @@ test("resource inputs display API values and preserve them through user edits", 
   try {
     act(() => { renderer = TestRenderer.create(createElement(Editor)); });
     const input = (label: string) => renderer!.root.findByProps({ "aria-label": label });
-    expect(input("CPU").props.value).toBe("");
-    expect(input("Memory").props.value).toBe("536870912B");
-    expect(input("Disk").props.value).toBe("");
+    for (const [label, min, max] of [["CPU", 1, 8], ["Memory", 1, 16], ["Disk", 1, 20]] as const) {
+      expect(input(label).props.type).toBe("range");
+      expect(input(label).props.min).toBe(min);
+      expect(input(label).props.max).toBe(max);
+      expect(input(label).props.step).toBe(1);
+    }
+    expect(input("CPU").props["aria-valuetext"]).toBe("Provider default");
+    expect(input("Memory").props.value).toBe(1);
+    expect(input("Memory").props["aria-valuetext"]).toBe("536870912B");
+    expect(input("Disk").props["aria-valuetext"]).toBe("Provider default");
     act(() => { input("Image reference").props.onChange({ target: { value: "alpine:latest" } }); });
     expect(saved!.resources).toEqual({ cpu: null, memory: "536870912B", disk: null });
     expect(saved!.labels).toEqual({ owner: "api", purpose: "roundtrip" });
-    act(() => { input("CPU").props.onChange({ target: { value: "32" } }); });
-    act(() => { input("Memory").props.onChange({ target: { value: "768MiB" } }); });
-    act(() => { input("Disk").props.onChange({ target: { value: "64GB" } }); });
-    expect(saved!.resources).toEqual({ cpu: 32, memory: "768MiB", disk: "64GB" });
-    for (const label of ["CPU", "Memory", "Disk"]) {
-      act(() => { input(label).props.onChange({ target: { value: "" } }); });
-    }
-    expect(saved!.resources).toEqual({ cpu: null, memory: null, disk: null });
+    act(() => { input("CPU").props.onChange({ target: { value: "6" } }); });
+    expect(saved!.resources).toEqual({ cpu: 6, memory: "536870912B", disk: null });
+    // Selecting the displayed fallback is an explicit edit, even when the
+    // numeric position matches the initial projection of the loaded value.
+    act(() => { input("Memory").props.onChange({ target: { value: "2" } }); });
+    act(() => { input("Memory").props.onChange({ target: { value: "1" } }); });
+    expect(saved!.resources).toEqual({ cpu: 6, memory: "1GB", disk: null });
+    act(() => { input("Disk").props.onChange({ target: { value: "12" } }); });
+    expect(saved!.resources).toEqual({ cpu: 6, memory: "1GB", disk: "12GB" });
   } finally {
     act(() => { renderer?.unmount(); });
     cleanup();
