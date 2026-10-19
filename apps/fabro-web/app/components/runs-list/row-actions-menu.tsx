@@ -11,6 +11,7 @@ import {
   canArchive,
   canCancel,
   canDelete,
+  canRetry,
   canUnarchive,
   cancellationActionLabel,
   cancellationSuccessMessage,
@@ -24,6 +25,7 @@ import {
 } from "../../lib/run-actions";
 import type { LifecycleAction } from "../../lib/run-actions";
 import { useToast } from "../toast";
+import { RetryRunDialog } from "../retry-run-dialog";
 import { ConfirmDialog } from "../ui";
 
 const MENU_ITEM_CLASS =
@@ -37,12 +39,14 @@ export function RowActionsMenu({ run }: { run: RunWithStatus }) {
   const { push } = useToast();
   const [pendingAction, setPendingAction] = useState<LifecycleAction | "delete" | null>(null);
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false);
+  const [retryDialogOpen, setRetryDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [idCopied, setIdCopied] = useState(false);
 
   const status = run.lifecycleStatus;
   const showApprove = run.pendingApproval === true;
   const showDeny = run.pendingApproval === true;
+  const showRetry = canRetry(status);
   const showArchive = canArchive(status);
   const showUnarchive = canUnarchive(status);
   const showCancel = canCancel(status);
@@ -54,7 +58,7 @@ export function RowActionsMenu({ run }: { run: RunWithStatus }) {
   );
   const pending = pendingAction !== null || cancellationPending;
 
-  const hasLifecycle = showArchive || showUnarchive;
+  const hasLifecycle = showRetry || showArchive || showUnarchive;
   const hasDestructive = showDeny || showCancel || showDelete;
 
   async function runAction<T>(
@@ -160,6 +164,18 @@ export function RowActionsMenu({ run }: { run: RunWithStatus }) {
               </button>
             </MenuItem>
           )}
+          {showRetry && (
+            <MenuItem>
+              <button
+                type="button"
+                onClick={() => setRetryDialogOpen(true)}
+                disabled={pending}
+                className={MENU_ITEM_CLASS}
+              >
+                Retry
+              </button>
+            </MenuItem>
+          )}
           {showArchive && (
             <MenuItem>
               <button
@@ -233,6 +249,9 @@ export function RowActionsMenu({ run }: { run: RunWithStatus }) {
           )}
         </MenuItems>
       </Menu>
+      {retryDialogOpen && (
+        <RetryRunDialog runId={run.id} onClose={() => setRetryDialogOpen(false)} />
+      )}
       <ConfirmDialog
         open={deleteDialogOpen}
         title="Delete this run?"

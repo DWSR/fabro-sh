@@ -46,6 +46,18 @@ const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
   "dead",
 ]);
 
+export async function retryRun(id: string): Promise<Run> {
+  try {
+    return await apiData(() => runsApi.retryRun(id));
+  } catch (error) {
+    throw lifecycleActionErrorFromError(error);
+  }
+}
+
+export function canRetry(status: string | null | undefined): boolean {
+  return isTerminalRunStatus(status);
+}
+
 export async function cancelRun(id: string, request?: Request): Promise<Run> {
   return runLifecycleAction(id, "cancel", request);
 }
@@ -197,13 +209,15 @@ export function deleteErrorMessage(error: unknown): string {
   return "Couldn't delete the run right now. Try again.";
 }
 
-export function mapError(error: unknown, action: LifecycleAction): string {
+export function mapError(error: unknown, action: LifecycleAction | "retry"): string {
   if (isLifecycleActionError(error)) {
     if (error.status === 404) {
       return "This run no longer exists.";
     }
     if (error.status === 409) {
       switch (action) {
+        case "retry":
+          return "Only terminal, non-archived runs can be retried.";
         case "cancel":
           return "This run can no longer be cancelled.";
         case "approve":
@@ -223,6 +237,8 @@ export function mapError(error: unknown, action: LifecycleAction): string {
   }
 
   switch (action) {
+    case "retry":
+      return "Couldn't retry the run right now. Try again.";
     case "cancel":
       return "Couldn't cancel the run right now. Try again.";
     case "approve":

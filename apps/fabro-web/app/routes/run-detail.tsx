@@ -12,6 +12,7 @@ import {
 import { AgentSessionActivity } from "@qltysh/fabro-api-client";
 
 import { type SteerBarHandle } from "../components/steer-bar";
+import { RetryRunDialog } from "../components/retry-run-dialog";
 import { ErrorState } from "../components/state";
 import { useToast } from "../components/toast";
 import {
@@ -114,6 +115,7 @@ export default function RunDetail({ params }: { params: { id: string } }) {
   const interruptMutation = useInterruptRun(params.id);
   const navigate = useNavigate();
   const { mutate } = useSWRConfig();
+  const [retryDialogOpen, setRetryDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [dockMeasurement, setDockMeasurement] =
@@ -279,6 +281,13 @@ export default function RunDetail({ params }: { params: { id: string } }) {
       },
     ],
     lifecycle: [
+      ...(visibility.showRetry
+        ? [{
+          key:      "retry",
+          label:    "Retry",
+          onSelect: () => setRetryDialogOpen(true),
+        }]
+        : []),
       ...(visibility.showArchive
         ? [{
           key:          "archive",
@@ -373,6 +382,13 @@ export default function RunDetail({ params }: { params: { id: string } }) {
             }}
           />
 
+          {retryDialogOpen && (
+            <RetryRunDialog
+              key={params.id}
+              runId={params.id}
+              onClose={() => setRetryDialogOpen(false)}
+            />
+          )}
           <ConfirmDialog
             open={deleteDialogOpen}
             title="Delete this run?"
