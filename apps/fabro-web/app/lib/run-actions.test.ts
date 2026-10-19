@@ -11,6 +11,8 @@ import {
   archiveRun,
   archiveRuns,
   canArchive,
+  canRetry,
+  retryRun,
   canApprove,
   canCancel,
   canUnarchive,
@@ -458,5 +460,34 @@ describe("run lifecycle actions", () => {
     expect(isCancellationPendingState("failed", "cancel", true)).toBe(false);
     expect(cancellationActionLabel(true)).toBe("Cancelling…");
     expect(cancellationActionLabel(false)).toBe("Cancel");
+  });
+});
+
+
+describe("retryRun", () => {
+  test("posts to retry and returns the new run", async () => {
+    const run = { ...makeRun({ kind: "pending" }), id: "new-run" };
+    const { requests } = stubGeneratedAxiosOnce({ status: 201, body: run });
+    expect(await retryRun("run-1")).toEqual(run);
+    expect(requests).toEqual([{ url: "/api/v1/runs/run-1/retry", method: "post", data: undefined }]);
+  });
+
+  test("preserves API errors for the retry dialog", async () => {
+    const errors = [{ status: "422", title: "Invalid run", detail: "Saved environment is unavailable." }];
+    stubGeneratedAxiosOnce({ status: 422, body: { errors } });
+    await expect(retryRun("run-1")).rejects.toEqual({ status: 422, errors });
+  });
+
+  test("eligibility includes all terminal states and excludes archived or unknown states", () => {
+    for (const status of ["succeeded", "failed", "dead"]) expect(canRetry(status)).toBe(true);
+    for (const status of ["archived", "submitted", "pending", "runnable", "starting", "running", "paused", "blocked", "unknown", null, undefined]) {
+      expect(canRetry(status)).toBe(false);
+    }
+  });
+
+  test("maps retry failures with actionable fallback messages", () => {
+    expect(mapError({ status: 404, errors: [] }, "retry")).toBe("This run no longer exists.");
+    expect(mapError({ status: 409, errors: [] }, "retry")).toBe("Only terminal, non-archived runs can be retried.");
+    expect(mapError(new Error("offline"), "retry")).toBe("Couldn't retry the run right now. Try again.");
   });
 });

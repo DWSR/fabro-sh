@@ -85,6 +85,7 @@ export function ConfirmDialog({
   confirmLabel,
   pendingLabel,
   cancelLabel = "Cancel",
+  tone = "danger",
   pending = false,
   onConfirm,
   onCancel,
@@ -95,6 +96,7 @@ export function ConfirmDialog({
   confirmLabel: string;
   pendingLabel?: string;
   cancelLabel?: string;
+  tone?: "primary" | "danger";
   pending?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -126,7 +128,7 @@ export function ConfirmDialog({
                 type="button"
                 onClick={onConfirm}
                 disabled={pending}
-                className={DANGER_BUTTON_CLASS}
+                className={tone === "danger" ? DANGER_BUTTON_CLASS : PRIMARY_BUTTON_CLASS}
               >
                 {pending ? (pendingLabel ?? `${confirmLabel}…`) : confirmLabel}
               </button>
