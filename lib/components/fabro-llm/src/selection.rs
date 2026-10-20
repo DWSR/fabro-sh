@@ -9,7 +9,10 @@
 //! - `provider/model` pins the provider, as the lithos resolver reads it.
 //! - An unknown selector pinned to a provider passes through verbatim on that
 //!   provider.
-//! - An unqualified unknown selector passes through on the default provider.
+//! - An unqualified unknown selector is an error. Passthrough needs a provider
+//!   pin, so a typo never lands on whichever provider happens to win priority.
+//! - A bare provider name is an error that points at the provider pin; it is
+//!   never a model name.
 //! - No selector picks the default offering (of the pinned provider, when one
 //!   is given).
 //!
@@ -70,6 +73,14 @@ pub enum ModelSelectionError {
     UnknownSelector { selector: String },
     #[error("model selector '{selector}' is unknown on provider '{provider}'")]
     UnknownSelectorOnProvider {
+        selector: String,
+        provider: ProviderId,
+    },
+    #[error(
+        "'{selector}' names the provider '{provider}', not a model; set provider = \"{provider}\" \
+         and omit the model to use its default"
+    )]
+    ProviderUsedAsModel {
         selector: String,
         provider: ProviderId,
     },
@@ -155,6 +166,14 @@ pub fn select<'a>(
     }
     let matches = catalog.offerings_matching(selector);
     if matches.is_empty() {
+        // A provider name in the model position is the one unknown selector
+        // with an obvious intent, so say what the caller meant to write.
+        if let Some(provider) = catalog.enabled_provider(selector) {
+            return Err(ModelSelectionError::ProviderUsedAsModel {
+                selector: selector.to_string(),
+                provider: provider.id().clone(),
+            });
+        }
         return Err(ModelSelectionError::UnknownSelector {
             selector: selector.to_string(),
         });
@@ -230,13 +249,6 @@ pub fn resolve_selection(
                 model: selector,
             })
         }
-        Err(ModelSelectionError::UnknownSelector { .. }) => {
-            let default = select_default(catalog, eligible)?;
-            Ok(SelectedModel {
-                provider: default.provider.id().clone(),
-                model:    selector.to_string(),
-            })
-        }
         Err(error) => Err(error),
     }
 }
@@ -296,17 +308,53 @@ mod tests {
     }
 
     #[test]
-    fn unknown_selector_passes_through_on_the_default_provider() {
+    fn unknown_unqualified_selector_is_an_error_not_a_passthrough() {
         let catalog = test_catalog();
-        let selected = resolve_selection(
+        let error = resolve_selection(
             &catalog,
             Some("totally-new-model"),
             None,
             &eligible(&["openai", "anthropic"]),
         )
+        .unwrap_err();
+        assert_eq!(error, ModelSelectionError::UnknownSelector {
+            selector: "totally-new-model".to_string(),
+        });
+    }
+
+    #[test]
+    fn bare_provider_name_is_rejected_with_a_pin_hint() {
+        let catalog = test_catalog();
+        for (selector, provider) in [
+            ("openai", builtin::openai()),
+            ("anthropic", builtin::anthropic()),
+        ] {
+            let error = resolve_selection(
+                &catalog,
+                Some(selector),
+                None,
+                &eligible(&["openai", "anthropic"]),
+            )
+            .unwrap_err();
+            assert_eq!(error, ModelSelectionError::ProviderUsedAsModel {
+                selector: selector.to_string(),
+                provider: provider.clone(),
+            });
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("provider = \"{provider}\""))
+            );
+        }
+        // The pin alone still means that provider's default.
+        let selected = resolve_selection(
+            &catalog,
+            None,
+            Some(&builtin::openai()),
+            &eligible(&["openai"]),
+        )
         .unwrap();
-        assert_eq!(selected.provider, builtin::anthropic());
-        assert_eq!(selected.model, "totally-new-model");
+        assert_eq!(selected.provider, builtin::openai());
     }
 
     #[test]
