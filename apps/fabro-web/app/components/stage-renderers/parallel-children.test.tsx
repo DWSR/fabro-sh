@@ -119,8 +119,8 @@ describe("ParallelChildren", () => {
     expect(rows[1]).toContain("Running");
     expect(rows[1]).toContain("review_opus");
     expect(hrefs(renderer)).toEqual([
-      "/runs/run-1/stages/review_glm@1",
-      "/runs/run-1/stages/review_opus@1",
+      "/runs/run-1/stages/review_glm%401",
+      "/runs/run-1/stages/review_opus%401",
     ]);
     expect(statValue(renderer, "Succeeded")).toBe("1");
     expect(statValue(renderer, "Failed")).toBe("0");
@@ -154,7 +154,7 @@ describe("ParallelChildren", () => {
       ],
     );
 
-    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_glm@1"]);
+    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_glm%401"]);
   });
 
   test("shows a late-starting branch when lower indexes have no stage yet", () => {
@@ -168,7 +168,7 @@ describe("ParallelChildren", () => {
       "PendingBranch 2",
       "Runningreview_opus",
     ]);
-    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_opus@1"]);
+    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_opus%401"]);
     expect(statValue(renderer, "Branches")).toBe("3");
   });
 
@@ -192,7 +192,7 @@ describe("ParallelChildren", () => {
     );
 
     expect(branchRowText(renderer)).toEqual(["Runningreview_glm@2"]);
-    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_glm@2"]);
+    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review_glm%402"]);
   });
 
   test("keeps duplicate branch targets in index order and only links recorded stages", () => {
@@ -208,7 +208,7 @@ describe("ParallelChildren", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("Succeeded");
     expect(rows[1]).toContain("Failed");
-    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review@1"]);
+    expect(hrefs(renderer)).toEqual(["/runs/run-1/stages/review%401"]);
   });
 
   test("renders a completed result without a matching stage as an unlinked row", () => {

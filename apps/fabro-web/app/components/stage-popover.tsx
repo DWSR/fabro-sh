@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import type { StageState } from "@qltysh/fabro-api-client";
 
+import { stagePath } from "../lib/stage-routes";
 import { formatTokenCount } from "../lib/format";
 import {
   formatStageLabel,
@@ -106,7 +107,7 @@ export function StagePopover({ runId, stage, duration }: StagePopoverProps) {
         {stage.resumedFromStageId && (
           <PopoverRow label="Resumed from">
             <Link
-              to={`/runs/${runId}/stages/${encodeURIComponent(stage.resumedFromStageId)}`}
+              to={stagePath(runId, stage.resumedFromStageId)}
               className="font-mono text-teal-500 hover:underline"
             >
               {stage.resumedFromStageId}
