@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { StageState, type RunStage } from "@qltysh/fabro-api-client";
 
 import { HoverCard, PopoverHeader, PopoverRow, PopoverRows } from "./ui";
+import { stagePath } from "../lib/stage-routes";
 import { isVisibleStage } from "../data/runs";
 import { formatAbsoluteTs, formatDurationMs } from "../lib/format";
 import {
@@ -150,7 +151,7 @@ function stageRow(runId: string, stage: RunStage, nowMs: number): Row | null {
     endMs,
     durationMs,
     barClass: stageBarClass(stage.status),
-    href: `/runs/${runId}/stages/${encodeURIComponent(stage.id)}`,
+    href: stagePath(runId, stage.id),
     popover: stagePopover(stage, durationMs, inFlight),
   };
 }

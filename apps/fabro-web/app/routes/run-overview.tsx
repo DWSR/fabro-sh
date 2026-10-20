@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { stagePath } from "../lib/stage-routes";
 import { ApiError } from "../lib/api-client";
 import { useRun, useRunGraph, useRunGraphSource, useRunStages } from "../lib/queries";
 import { FloatingTooltip } from "../components/floating-tooltip";
@@ -76,7 +77,9 @@ export default function RunOverview() {
   const [hoveredNode, setHoveredNode] = useState<RunGraphNodeHover | null>(null);
 
   const openStage = useCallback(
-    (stageId: string) => navigate(`/runs/${id}/stages/${stageId}`),
+    (stageId: string) => {
+      if (id) navigate(stagePath(id, stageId));
+    },
     [id, navigate],
   );
   useAnnotatedRunGraphSvg({

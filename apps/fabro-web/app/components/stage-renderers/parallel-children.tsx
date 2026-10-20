@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/react/20/solid";
 import { StageState } from "@qltysh/fabro-api-client";
 
+import { stagePath } from "../../lib/stage-routes";
 import type { Stage } from "../stage-sidebar";
 import { formatStageLabel, stageStatusLabel, stageStatusTone } from "../../lib/stage-sidebar";
 import { StageMetaBar } from "./meta-bar";
@@ -82,7 +83,7 @@ function ChildRow({
     <li className="flex items-center gap-3 px-4 py-2.5">
       {row.stageId ? (
         <Link
-          to={`/runs/${runId}/stages/${row.stageId}`}
+          to={stagePath(runId, row.stageId)}
           className="group flex flex-1 items-center gap-3 rounded -m-1 p-1 transition-colors hover:bg-overlay focus-visible:bg-overlay focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-teal-500"
         >
           {inner}

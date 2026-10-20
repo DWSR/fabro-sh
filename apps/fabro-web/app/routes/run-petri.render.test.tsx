@@ -177,8 +177,8 @@ describe("a two-branch parallel run", () => {
       />,
     );
     expect(html).toContain("Branches");
-    expect(html).toContain("/runs/run-1/stages/a@1");
-    expect(html).toContain("/runs/run-1/stages/b@1");
+    expect(html).toContain("/runs/run-1/stages/a%401");
+    expect(html).toContain("/runs/run-1/stages/b%401");
     expect((html.match(/Succeeded/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
@@ -274,7 +274,7 @@ describe("a human gate answered through the API", () => {
         runId="run-1"
       />,
     );
-    expect(html).toContain("/runs/run-1/stages/no@1");
+    expect(html).toContain("/runs/run-1/stages/no%401");
     expect(html).not.toContain("No target");
   });
 
