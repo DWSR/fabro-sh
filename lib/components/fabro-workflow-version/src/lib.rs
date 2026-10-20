@@ -457,6 +457,140 @@ mod tests {
         )
     }
 
+    fn hook_documentation_toml(markdown: &str) -> Vec<&str> {
+        let snippets: Vec<_> = markdown
+            .split("```toml")
+            .skip(1)
+            .map(|fence| {
+                let (_, body) = fence.split_once('\n').expect("TOML fence has a body");
+                body.split_once("```").expect("TOML fence is closed").0
+            })
+            .collect();
+        assert!(
+            !snippets.is_empty(),
+            "hook documentation must contain TOML examples"
+        );
+        snippets
+    }
+
+    #[test]
+    fn hook_documentation_examples_register_and_resolve() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use fabro_config::{RunLayer, SettingsLayer, WorkflowSettingsBuilder};
+        use fabro_types::settings::InterpString;
+        use fabro_types::settings::run::HookType;
+
+        let guide = include_str!("../../../../docs/public/agents/hooks.mdx");
+        let reference = include_str!("../../../../docs/public/execution/run-configuration.mdx");
+        let reference = reference
+            .split_once("### `[[run.hooks]]`")
+            .expect("hook reference section exists")
+            .1
+            .split_once("\n## ")
+            .expect("hook reference section has an end")
+            .0;
+        let catalog: SettingsLayer = "[environments.default]\nprovider = \"local\"\n"
+            .parse()
+            .unwrap();
+        let mut transports = BTreeMap::<_, usize>::new();
+        let mut timeouts = BTreeSet::new();
+        let mut saw_argv = false;
+        let mut saw_headers = false;
+        for (document, markdown) in [("guide", guide), ("reference", reference)] {
+            for (index, snippet) in hook_documentation_toml(markdown).into_iter().enumerate() {
+                version_with_config(snippet, []).unwrap_or_else(|error| {
+                    panic!(
+                        "{document} TOML example {} must register: {error:?}",
+                        index + 1
+                    )
+                });
+                let layer: SettingsLayer = snippet.parse().unwrap();
+                let entries = &layer.run.as_ref().expect("example has run settings").hooks;
+                assert!(!entries.is_empty(), "example must define hooks");
+                let settings = WorkflowSettingsBuilder::new()
+                    .server_manifest_defaults(RunLayer::default(), catalog.environments.clone())
+                    .workflow_toml(snippet)
+                    .unwrap()
+                    .build()
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "{document} TOML example {} must resolve: {error:?}",
+                            index + 1
+                        )
+                    });
+                assert_eq!(settings.run.hooks.len(), entries.len());
+                for (entry, hook) in entries.iter().zip(&settings.run.hooks) {
+                    match hook
+                        .resolved_hook_type()
+                        .as_deref()
+                        .expect("hook has a transport")
+                    {
+                        HookType::Command { command } => {
+                            *transports.entry("command").or_default() += 1;
+                            if let Some(script) = &entry.script {
+                                assert_eq!(command, script);
+                            } else {
+                                assert_eq!(entry.command.as_ref().unwrap().len(), 2);
+                                assert_eq!(command, &InterpString::parse("cargo fmt"));
+                                saw_argv = true;
+                            }
+                        }
+                        HookType::Http { url, headers, .. } => {
+                            *transports.entry("http").or_default() += 1;
+                            assert_eq!(Some(url), entry.url.as_ref());
+                            if !entry.headers.is_empty() {
+                                assert_eq!(headers.as_ref().unwrap(), &entry.headers);
+                                saw_headers = true;
+                            }
+                        }
+                        HookType::Prompt { prompt, .. } => {
+                            *transports.entry("prompt").or_default() += 1;
+                            assert!(entry.agent.is_none());
+                            assert_eq!(Some(prompt), entry.prompt.as_ref());
+                        }
+                        HookType::Agent {
+                            prompt,
+                            max_tool_rounds,
+                            ..
+                        } => {
+                            *transports.entry("agent").or_default() += 1;
+                            assert!(entry.agent.is_some());
+                            assert_eq!(Some(prompt), entry.prompt.as_ref());
+                            assert_eq!(max_tool_rounds, &entry.max_tool_rounds);
+                        }
+                    }
+                    if let Some(timeout) = hook.timeout_ms {
+                        timeouts.insert(timeout);
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            transports,
+            [("agent", 2), ("command", 9), ("http", 2), ("prompt", 3)].into()
+        );
+        assert_eq!(timeouts, [15_000, 30_000, 120_000].into());
+        assert!(saw_argv, "guide must demonstrate vector-valued command");
+        assert!(saw_headers, "guide must demonstrate nested HTTP headers");
+    }
+
+    #[test]
+    fn hook_documentation_obsolete_fields_remain_rejected() {
+        for source in [
+            "[[hooks]]\nevent = \"stage_start\"\nscript = \"true\"\n",
+            "[[run.hooks]]\nevent = \"stage_start\"\ntype = \"prompt\"\nprompt = \"Check\"\n",
+            "[[run.hooks]]\nevent = \"run_complete\"\ntype = \"http\"\nurl = \"https://example.com\"\n",
+            "[[run.hooks]]\nevent = \"stage_start\"\ncommand = \"true\"\n",
+            "[[run.hooks]]\nevent = \"stage_start\"\nscript = \"true\"\ntimeout_ms = 30000\n",
+        ] {
+            assert!(matches!(
+                version_with_config(source, []),
+                Err(WorkflowVersionError::Config { .. })
+            ));
+        }
+    }
+
     fn version_with_goal_file(
         reference: &str,
     ) -> Result<ValidatedWorkflowVersion, WorkflowVersionError> {

@@ -582,11 +582,11 @@ sandbox = false
 | `id` | Optional merge identity. Hooks with the same `id` replace each other across layers. |
 | `name` | Optional display name for the hook. |
 | `event` | Lifecycle event: `run_start`, `run_complete`, `stage_start`, `stage_complete`, etc. |
-| `script` | Shell-evaluated command (equivalent to the old `type = "command"` shorthand). |
-| `command` | Argv-style command (alternative to `script`). |
+| `script` | Shell command string. |
+| `command` | Command and arguments as an array of strings, such as `["cargo", "fmt"]`; an alternative to `script`. |
 | `matcher` | Regex matched against node ID or handler type. Limits which stages trigger this hook. |
 | `blocking` | Whether the hook must complete before execution continues. Defaults vary by event. |
-| `timeout` | Human-readable hook timeout (e.g. `"30s"`, `"1m"`). Default: `"60s"`. |
+| `timeout` | Human-readable hook timeout (e.g. `"30s"`, `"1m"`). Default: `"30s"` for prompt hooks, `"60s"` for other types. |
 | `sandbox` | Run inside the sandbox (`true`, default) or on the host (`false`). |
 
 Hook merge semantics: hooks with matching `id` values replace in place. Hooks without an `id` from a higher-precedence layer append after the fully merged inherited hook list.
