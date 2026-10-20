@@ -22,6 +22,8 @@ ref-cast.workspace = true
 regex.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# Recognizes ULID-shaped tokens so Fabro's own IDs are never scanned as secrets.
+ulid.workspace = true
 url.workspace = true
 
 [build-dependencies]
