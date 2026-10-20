@@ -222,11 +222,10 @@ async fn unknown_session_models_preserve_passthrough_on_the_selected_provider() 
     let app = fabro_server::test_support::build_test_router(test_app_state());
     let (run_id, _run_id_workspace) = create_run(&app).await;
 
-    for model in ["not-a-real-model", "openai/not-a-real-model"] {
-        let created = create_session_with_model(&app, &run_id, "Ask Fabro", model).await;
-        assert_eq!(created["model"], "not-a-real-model");
-        assert_eq!(created["provider"], "openai");
-    }
+    let created =
+        create_session_with_model(&app, &run_id, "Ask Fabro", "openai/not-a-real-model").await;
+    assert_eq!(created["model"], "not-a-real-model");
+    assert_eq!(created["provider"], "openai");
 }
 
 #[tokio::test]
@@ -234,7 +233,7 @@ async fn invalid_session_model_refs_are_rejected_at_creation() {
     let app = fabro_server::test_support::build_test_router(test_app_state());
     let (run_id, _run_id_workspace) = create_run(&app).await;
 
-    for model in ["openai", "openai/", "anthropic/gpt-5.4"] {
+    for model in ["openai", "openai/", "anthropic/gpt-5.4", "not-a-real-model"] {
         let response = create_session_response(
             &app,
             &run_id,
