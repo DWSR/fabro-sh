@@ -5,9 +5,10 @@
 //!
 //! - building the catalog from the lithos built-ins and the operator `[llm]`
 //!   overlay, and reading the agent harness a model expects ([`catalog`]);
-//! - Fabro's passthrough policy for selections made before a request exists
-//!   ([`selection`]); at request time the lithos resolver enforces `enabled`
-//!   and `stands_in_for` itself;
+//! - Fabro's selection policy for choices made before a request exists
+//!   ([`selection`]), including when an uncatalogued model may pass through; at
+//!   request time the lithos resolver enforces `enabled` and `stands_in_for`
+//!   itself;
 //! - constructing a client from a Fabro credential store ([`client`]);
 //! - model and provider probes ([`probe`]), and the API views of the catalog
 //!   ([`api`]);

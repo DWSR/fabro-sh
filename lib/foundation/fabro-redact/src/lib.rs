@@ -1,8 +1,12 @@
 //! Secret and credential redaction utilities.
 //!
 //! `redact_string`, `redact_json_value`, and `redact_jsonl_line` provide
-//! generic secret scanning. [`DisplaySafeUrl`] provides deterministic URL
-//! redaction for logging and error-message boundaries.
+//! generic secret scanning: Shannon entropy over alphanumeric tokens plus
+//! gitleaks credential patterns. Tokens that are ULIDs (Fabro's run, session,
+//! turn, message and pair IDs) are exempt from the entropy layer, so a run ID
+//! that happens to have many distinct characters is never turned into
+//! `REDACTED`. [`DisplaySafeUrl`] provides deterministic URL redaction for
+//! logging and error-message boundaries.
 
 mod entropy;
 mod gitleaks;

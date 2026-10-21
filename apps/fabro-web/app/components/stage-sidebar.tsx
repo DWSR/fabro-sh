@@ -18,6 +18,7 @@ import {
   MapIcon,
   PaperClipIcon,
 } from "@heroicons/react/24/outline";
+import { stagePath } from "../lib/stage-routes";
 import { formatDurationSecs } from "../lib/format";
 import { ACTIVE_STAGE_STATES, formatStageLabel, type Stage } from "../lib/stage-sidebar";
 import { elapsedSecsSince, useTickingNow } from "../lib/time";
@@ -207,7 +208,7 @@ export function StageSidebar({ stages, runId, selectedStageId, activeLink }: Sta
                 return (
                   <SidebarRow
                     key={stage.id}
-                    to={`/runs/${runId}/stages/${stage.id}`}
+                    to={stagePath(runId, stage.id)}
                     icon={config.icon}
                     iconClass={config.color}
                     label={formatStageLabel(stage)}

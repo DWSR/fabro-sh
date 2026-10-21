@@ -5,6 +5,7 @@ import {
   ArrowsRightLeftIcon,
 } from "@heroicons/react/20/solid";
 
+import { stagePath } from "../../lib/stage-routes";
 import type { Stage } from "../stage-sidebar";
 import { StageMetaBar } from "./meta-bar";
 import type { EdgeSelection } from "./helpers";
@@ -67,7 +68,7 @@ export function ConditionalDecision({
           {edge ? (
             targetStage ? (
               <Link
-                to={`/runs/${runId}/stages/${targetStage.id}`}
+                to={stagePath(runId, targetStage.id)}
                 className="group rounded-md bg-teal-500/10 px-3 py-2 text-center transition-colors hover:bg-teal-500/20 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-teal-500"
               >
                 <div className="text-[10px] font-medium uppercase tracking-wider text-teal-500">

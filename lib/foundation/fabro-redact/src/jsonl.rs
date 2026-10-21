@@ -209,19 +209,50 @@ mod tests {
 
     #[test]
     fn redact_jsonl_line_preserves_ids_repeated_in_scanned_values() {
-        // This run ID from a failed CLI attach exceeds the entropy threshold.
-        // Redacting an event's context value must not also rewrite its envelope.
+        // Redacting an event's context value must not also rewrite its
+        // envelope, even when the envelope's ID field holds the same text.
+        let input = serde_json::json!({
+            "run_id": HIGH_ENTROPY_SECRET,
+            "item": { "context": { "value": HIGH_ENTROPY_SECRET } },
+        });
+        let result = redact_jsonl_line(&input.to_string());
+        let redacted: Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(redacted["run_id"], HIGH_ENTROPY_SECRET);
+        assert_eq!(redacted["item"]["context"]["value"], "REDACTED");
+        assert_eq!(redacted, redact_json_value(input));
+    }
+
+    #[test]
+    fn redact_jsonl_line_keeps_run_ids_wherever_they_appear() {
+        // This run ID from a failed CLI attach exceeds the entropy threshold
+        // on its own; the ULID exemption keeps it intact in scanned values,
+        // not only in the skipped `run_id` envelope field.
         let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
         let input = serde_json::json!({
             "run_id": run_id,
-            "item": { "context": { "value": run_id } },
+            "item": { "record": {
+                "web_url": format!("http://localhost:3000/runs/{run_id}"),
+                "run_branch": format!("fabro/run/{run_id}"),
+                "message": format!("checkpoint for run {run_id}: {HIGH_ENTROPY_SECRET}"),
+            } },
         });
         let result = redact_jsonl_line(&input.to_string());
         let redacted: Value = serde_json::from_str(&result).unwrap();
 
         assert_eq!(redacted["run_id"], run_id);
-        assert_eq!(redacted["item"]["context"]["value"], "REDACTED");
-        assert_eq!(redacted, redact_json_value(input));
+        assert_eq!(
+            redacted["item"]["record"]["web_url"],
+            format!("http://localhost:3000/runs/{run_id}")
+        );
+        assert_eq!(
+            redacted["item"]["record"]["run_branch"],
+            format!("fabro/run/{run_id}")
+        );
+        assert_eq!(
+            redacted["item"]["record"]["message"],
+            format!("checkpoint for run {run_id}: REDACTED")
+        );
     }
 
     #[test]

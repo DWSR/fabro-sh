@@ -1329,7 +1329,8 @@ mod tests {
     #[test]
     fn redacted_raw_lines_keep_the_typed_run_id() {
         let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
-        let mut event = petri(1, json!({"record": {"body": {"value": run_id}}}));
+        let secret = "xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6p";
+        let mut event = petri(1, json!({"record": {"body": {"value": secret}}}));
         event.run_id = run_id.parse().expect("a valid run ID");
 
         let line = raw_line(&event).expect("a redacted line");
@@ -1337,5 +1338,26 @@ mod tests {
         assert_eq!(decoded.run_id, event.run_id);
         assert_eq!(decoded.stream_seq, event.stream_seq);
         assert_eq!(decoded.item["record"]["body"]["value"], "REDACTED");
+    }
+
+    #[test]
+    fn raw_lines_preserve_run_ids_that_cross_the_entropy_threshold() {
+        // This ID has enough distinct characters to read as a secret to the
+        // entropy scanner; the Web UI link and run branch must survive.
+        let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
+        for (kind, field, text) in [
+            (
+                "run.created",
+                "web_url",
+                format!("http://localhost:3000/runs/{run_id}"),
+            ),
+            ("run.branch", "run_branch", format!("fabro/run/{run_id}")),
+        ] {
+            let mut event = platform(1, &json!({"kind": kind, field: text, "content": run_id}));
+            event.run_id = run_id.parse().expect("a valid run ID");
+            let line = raw_line(&event).expect("a redacted line");
+            let decoded: RunStreamItem = serde_json::from_str(&line).expect("a valid stream item");
+            assert_eq!(decoded, event);
+        }
     }
 }

@@ -299,7 +299,8 @@ fn model_selection_response(error: &ModelSelectionError) -> Response {
     match error {
         ModelSelectionError::UnknownProvider { .. }
         | ModelSelectionError::UnknownSelector { .. }
-        | ModelSelectionError::UnknownSelectorOnProvider { .. } => {
+        | ModelSelectionError::UnknownSelectorOnProvider { .. }
+        | ModelSelectionError::ProviderUsedAsModel { .. } => {
             ApiError::not_found(error.to_string()).into_response()
         }
         ModelSelectionError::ProviderUnavailable { .. }
