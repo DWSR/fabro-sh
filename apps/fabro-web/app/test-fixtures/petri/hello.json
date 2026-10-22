@@ -36,10 +36,6 @@
           "git": {
             "author": null
           },
-          "prepare": {
-            "steps": [],
-            "timeout_ms": 300000
-          },
           "execution": {
             "mode": "normal",
             "approval": "prompt"
@@ -808,10 +804,6 @@
                 },
                 "git": {
                   "author": null
-                },
-                "prepare": {
-                  "steps": [],
-                  "timeout_ms": 300000
                 },
                 "execution": {
                   "mode": "normal",

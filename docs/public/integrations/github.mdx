@@ -316,7 +316,7 @@ The upper bound on what Fabro will mint is whatever permissions the GitHub App i
 
 ### Commit attribution
 
-Every commit a run creates is authored and committed by the run's GitHub credential identity. In App mode that is the App's bot account, `<slug>[bot] <id+slug[bot]@users.noreply.github.com>`, so GitHub attributes checkpoint commits and workflow-created commits to the App. In token mode it is the token's user with their GitHub noreply address. Fabro resolves the identity once per run and passes it to every prepare step, command stage, agent tool, and ACP agent as `GIT_AUTHOR_*` / `GIT_COMMITTER_*` variables, so a workflow that clones or initializes another repository commits as the same identity without configuring Git itself. `[run.git.author]` overrides either field; see [server configuration](/administration/server-configuration#rungitauthor-section).
+Every commit a run creates is authored and committed by the run's GitHub credential identity. In App mode that is the App's bot account, `<slug>[bot] <id+slug[bot]@users.noreply.github.com>`, so GitHub attributes checkpoint commits and workflow-created commits to the App. In token mode it is the token's user with their GitHub noreply address. Fabro resolves the identity once per run and passes it to every command stage, agent tool, and ACP agent as `GIT_AUTHOR_*` / `GIT_COMMITTER_*` variables, so a workflow that clones or initializes another repository commits as the same identity without configuring Git itself. `[run.git.author]` overrides either field; see [server configuration](/administration/server-configuration#rungitauthor-section).
 
 ### Checkpoint pushing
 

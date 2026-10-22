@@ -105,6 +105,42 @@ fn workflow_settings_default_run_checkpoint_skip_git_hooks_is_false() {
     assert_eq!(json["run"]["checkpoint"]["skip_git_hooks"], false);
 }
 
+#[test]
+fn current_settings_and_schema_omit_retired_preparation() {
+    let value = serde_json::to_value(WorkflowSettings::default()).unwrap();
+    assert!(value["run"].get("prepare").is_none());
+    let schema: serde_json::Value = serde_yaml::from_str(include_str!(
+        "../../../../docs/public/api-reference/fabro-api.yaml"
+    ))
+    .unwrap();
+    let schemas = &schema["components"]["schemas"];
+    assert!(
+        schemas["RunNamespace"]["properties"]
+            .get("prepare")
+            .is_none()
+    );
+    assert!(
+        !schemas["RunNamespace"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|key| key == "prepare")
+    );
+    for name in [
+        "RunPrepareSettings",
+        "PreparedStep",
+        "PreparedScriptStep",
+        "PreparedCommandStep",
+    ] {
+        assert!(schemas.get(name).is_none());
+    }
+    let mut historical = value.clone();
+    historical["run"]["prepare"] =
+        serde_json::json!({"commands": ["echo historical"], "timeout_ms": 300000});
+    let settings: ApiWorkflowSettings = serde_json::from_value(historical).unwrap();
+    assert_eq!(serde_json::to_value(settings).unwrap(), value);
+}
+
 fn assert_same_type<T: 'static, U: 'static>() {
     assert_eq!(
         TypeId::of::<T>(),

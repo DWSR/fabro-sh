@@ -251,7 +251,7 @@ pub(crate) enum InvalidSourceError {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InvalidSettingsError {
-    #[error("Failed to parse run config TOML")]
+    #[error("Failed to parse run config TOML at {path}")]
     Parse {
         path:   ManifestPath,
         #[source]

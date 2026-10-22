@@ -74,6 +74,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejects_removed_prepare_in_every_live_source_without_leaking_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let forms = [
+            "[run.prepare]",
+            "[[run.prepare]]",
+            "[run.prepare]\ntimeout = \"5m\"",
+            "[run.prepare]\nsteps = []",
+            "run.prepare = 7",
+            "run = { prepare = {} }",
+            "run.prepare.steps = []",
+            "[\"run\".\"prepare\"]",
+            "[[run.prepare.steps]]\nscript = \"do-not-print-this-value\"",
+        ];
+        for source in [
+            SettingsSource::ActiveSettings,
+            SettingsSource::Project,
+            SettingsSource::Workflow,
+            SettingsSource::DirectRun,
+            SettingsSource::User,
+        ] {
+            let path = dir.path().join(format!("{source}.toml"));
+            for form in forms {
+                std::fs::write(&path, form).unwrap();
+                let error = load_settings_path(&path, source).unwrap_err();
+                let message = error.to_string();
+                assert!(message.contains("run.prepare"), "{message}");
+                assert!(message.contains("no longer supported"), "{message}");
+                assert!(message.contains("command nodes"), "{message}");
+                assert!(message.contains(&path.display().to_string()), "{message}");
+                assert!(!message.contains("do-not-print-this-value"));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), form);
+            }
+        }
+    }
+
+    #[test]
     fn load_settings_path_auto_migrates_legacy_sandbox_file() {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("settings.toml");

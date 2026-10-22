@@ -2,7 +2,7 @@
 //!
 //! `[run]` is the shared execution domain. It may appear in all three config
 //! files and layer normally. Subdomains cover model selection, git author,
-//! prepare steps, execution posture, checkpoint policy, environment selection,
+//! execution posture, checkpoint policy, environment selection,
 //! notifications, interviews, agent knobs, hooks, SCM targeting, pull-request
 //! behavior, and artifact collection.
 
@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration as StdDuration;
 
-use fabro_util::shell;
 use serde::de::{self, Deserializer};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
@@ -31,7 +30,6 @@ pub struct RunNamespace {
     pub inputs:        HashMap<String, toml::Value>,
     pub model:         RunModelSettings,
     pub git:           RunGitSettings,
-    pub prepare:       RunPrepareSettings,
     pub execution:     RunExecutionSettings,
     pub checkpoint:    RunCheckpointSettings,
     pub clone:         RunCloneSettings,
@@ -60,7 +58,6 @@ impl Default for RunNamespace {
             inputs:        HashMap::new(),
             model:         RunModelSettings::default(),
             git:           RunGitSettings::default(),
-            prepare:       RunPrepareSettings::default(),
             execution:     RunExecutionSettings::default(),
             checkpoint:    RunCheckpointSettings::default(),
             clone:         RunCloneSettings::default(),
@@ -86,7 +83,7 @@ impl RunNamespace {
         substitute_goal(&mut self.goal, &mut lookup)?;
         substitute_string_map(&mut self.metadata, &mut lookup)?;
         // run.working_dir, run.model.provider/name, and run.git.author.* were
-        // demoted to plain `String` and removed from this pass (D2/D11):
+        // plain `String` fields excluded from this pass:
         // values stay literal.
         substitute_option_string(&mut self.model.controls.reasoning_effort, &mut lookup)?;
         substitute_option_string(&mut self.model.controls.speed, &mut lookup)?;
@@ -106,9 +103,6 @@ impl RunNamespace {
         }
         substitute_map(&mut self.integrations.github.permissions, &mut lookup)?;
         // run.scm.owner/repository are plain strings: values stay literal.
-        for step in &mut self.prepare.steps {
-            visit_prepared_step_strings(step, &mut |value| substitute_string(value, &mut lookup))?;
-        }
         // Only resolved inline servers carry substitutable templates; an
         // unresolved reference holds just an id + enabled flag.
         for entry in self.agent.mcps.values_mut() {
@@ -264,28 +258,6 @@ where
     }
 }
 
-/// Walk every interpolatable string in one prepare step — the runnable part
-/// (a `script` snippet or each `command` argv element) and every per-step `env`
-/// value. Both interpolation passes route through this one traversal so they
-/// cannot drift as `PreparedStepRun` or `PreparedStep` grow fields: the
-/// `{{ vars.* }}` pass ([`RunNamespace::substitute_variables`]) passes a
-/// `substitute_string` visitor, and the late secret pass
-/// ([`RunPrepareSettings::resolve_step_secrets`]) passes a
-/// `resolve_secret_string` visitor. Mirrors [`visit_mcp_transport_strings`].
-fn visit_prepared_step_strings<F>(
-    step: &mut PreparedStep,
-    visitor: &mut F,
-) -> Result<(), ResolveError>
-where
-    F: FnMut(&mut String) -> Result<(), ResolveError>,
-{
-    match &mut step.run {
-        PreparedStepRun::Script { script } => visitor(script)?,
-        PreparedStepRun::Command { command } => visit_string_vec(command, visitor)?,
-    }
-    visit_string_map(&mut step.env, visitor)
-}
-
 fn visit_string_vec<F>(values: &mut [String], visitor: &mut F) -> Result<(), ResolveError>
 where
     F: FnMut(&mut String) -> Result<(), ResolveError>,
@@ -366,8 +338,8 @@ mod run_namespace_variable_substitution_tests {
     use super::{
         ArtifactsSettings, DockerfileSource, EnvironmentImageSettings, EnvironmentNetworkMode,
         EnvironmentNetworkSettings, HookDefinition, HookEvent, HookType, InterpString,
-        McpHttpProtocol, McpServerSettings, McpTransport, PreparedStepRun, RunCheckpointSettings,
-        RunEnvironmentSettings, RunGoal, RunNamespace, RunPrepareSettings,
+        McpHttpProtocol, McpServerSettings, McpTransport, RunCheckpointSettings,
+        RunEnvironmentSettings, RunGoal, RunNamespace,
     };
 
     #[expect(
@@ -380,22 +352,6 @@ mod run_namespace_variable_substitution_tests {
             goal: Some(RunGoal::Inline(InterpString::parse(
                 "deploy {{ vars.ENV }} in {{ env.REGION }}",
             ))),
-            prepare: RunPrepareSettings {
-                steps:      vec![super::PreparedStep {
-                    run: PreparedStepRun::Command {
-                        command: vec![
-                            "echo".to_string(),
-                            "{{ vars.ENV }}".to_string(),
-                            "{{ env.REGION }}".to_string(),
-                        ],
-                    },
-                    env: HashMap::from([(
-                        "STAGE".to_string(),
-                        "{{ vars.ENV }}-{{ env.REGION }}".to_string(),
-                    )]),
-                }],
-                timeout_ms: 1_000,
-            },
             agent: super::RunAgentSettings {
                 mcps: HashMap::from([(
                     "http".to_string(),
@@ -451,21 +407,6 @@ mod run_namespace_variable_substitution_tests {
         assert_eq!(
             goal_source,
             Some("deploy prod in {{ env.REGION }}".to_string())
-        );
-        assert_eq!(run.prepare.steps.len(), 1);
-        // `{{ vars.* }}` substitutes per argv element while `{{ env.* }}` is
-        // left for the run boundary.
-        let PreparedStepRun::Command { command } = &run.prepare.steps[0].run else {
-            panic!("expected command argv prepare step");
-        };
-        assert_eq!(command.as_slice(), [
-            "echo".to_string(),
-            "prod".to_string(),
-            "{{ env.REGION }}".to_string(),
-        ]);
-        assert_eq!(
-            run.prepare.steps[0].env.get("STAGE").map(String::as_str),
-            Some("prod-{{ env.REGION }}")
         );
         let mcp = run.agent.mcps["http"]
             .as_resolved()
@@ -911,114 +852,6 @@ pub struct GitAuthorSettings {
     pub email: Option<String>,
 }
 
-// `#[serde(default)]` at the container level: these settings are persisted
-// inside the `run.created` event, so they must stay readable for events written
-// by older fabro versions. `steps` replaced a `commands: Vec<String>` field in
-// #530, so runs created before that have a `prepare` object with no `steps`
-// key. Without a default, the whole run fails to deserialize during projection
-// cache warmup and silently disappears from the run list. Falling back to the
-// `Default` impl (empty steps, product-default timeout) keeps historical runs
-// loadable; new runs always serialize explicit values, so nothing changes for
-// them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RunPrepareSettings {
-    pub steps:      Vec<PreparedStep>,
-    pub timeout_ms: u64,
-}
-
-impl Default for RunPrepareSettings {
-    fn default() -> Self {
-        Self {
-            steps:      Vec::new(),
-            timeout_ms: 300_000,
-        }
-    }
-}
-
-impl RunPrepareSettings {
-    /// Resolve `{{ secrets.* }}` tokens in every prepare step's runnable part
-    /// and per-step `env` values against the supplied lookup. Unsupported
-    /// tokens fail instead of reaching the process. A `script` step's snippet
-    /// resolves in place; a `command` step's argv resolves per element (each
-    /// element is shell-quoted later, in [`PreparedStep::to_shell_command`], so
-    /// quoting applies to the resolved value rather than the source token).
-    ///
-    /// This is the late, use-time half of prepare-step interpolation, the
-    /// counterpart to the server-side `{{ vars.* }}` substitution in
-    /// [`RunNamespace::substitute_variables`]: `{{ vars.* }}` are substituted
-    /// earlier, server-side, while `{{ secrets.* }}` resolves in whichever
-    /// process actually runs the steps (the run worker for `fabro run`).
-    /// Carrying the source form out of the config resolve layer keeps
-    /// `fabro validate` portable.
-    ///
-    /// A missing or non-token secret is a hard error. Unsupported `env` and
-    /// template-only `inputs` tokens surface as
-    /// [`ResolveErrorKind::Unavailable`](super::interp::ResolveErrorKind::Unavailable) errors.
-    pub fn resolve_step_secrets(
-        &self,
-        mut secrets_lookup: impl FnMut(&str) -> Option<String>,
-    ) -> Result<Self, ResolveError> {
-        let mut resolved = self.clone();
-        for step in &mut resolved.steps {
-            visit_prepared_step_strings(step, &mut |value| {
-                resolve_secret_string(value, &mut secrets_lookup)
-            })?;
-        }
-        Ok(resolved)
-    }
-}
-
-/// A single resolved prepare step: the thing to run plus the per-step
-/// environment variables it should see. The runnable part keeps the
-/// script-vs-argv distinction (see [`PreparedStepRun`]), and every string is
-/// carried in source form out of the config resolve layer. Secret tokens
-/// resolve at the run boundary via
-/// [`RunPrepareSettings::resolve_step_secrets`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PreparedStep {
-    #[serde(flatten)]
-    pub run: PreparedStepRun,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub env: HashMap<String, String>,
-}
-
-/// The runnable part of a prepare step, preserving the script-vs-argv
-/// distinction so each is treated correctly when assembled into the shell
-/// command that runs via `bash -c`:
-///
-/// - [`Script`](PreparedStepRun::Script) is a raw shell snippet kept verbatim
-///   for the shell to interpret.
-/// - [`Command`](PreparedStepRun::Command) is an argv: a vector of element
-///   source strings, neither pre-joined nor shell-quoted at config time. Its
-///   `{{ secrets.* }}` tokens resolve per element at the run boundary, and only
-///   then is each resolved element shell-quoted and joined. Resolving before
-///   quoting stops an interpolated secret from breaking out of its argument and
-///   injecting shell syntax.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PreparedStepRun {
-    Script { script: String },
-    Command { command: Vec<String> },
-}
-
-impl PreparedStep {
-    /// Flatten this step's runnable part into the single shell string that runs
-    /// via `bash -c`.
-    ///
-    /// For a script, the snippet is returned verbatim. For an argv `command`,
-    /// each element is shell-quoted and joined with spaces so an argument that
-    /// contains spaces or shell metacharacters survives as a single token. This
-    /// must run *after* [`RunPrepareSettings::resolve_step_secrets`] so the
-    /// quoting applies to the resolved values, not the secret token source.
-    pub fn to_shell_command(&self) -> String {
-        match &self.run {
-            PreparedStepRun::Script { script } => script.clone(),
-            PreparedStepRun::Command { command } => shell::shell_join(command),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunExecutionSettings {
     pub mode:     RunMode,
@@ -1315,7 +1148,7 @@ impl Default for RunEnvironmentSettings {
 }
 
 /// Build a lookup closure over a fixed list of name/value pairs for the
-/// run-boundary resolver tests. Shared by the env, secret, prepare-step, and
+/// run-boundary resolver tests. Shared by the env, secret, and
 /// MCP transport test modules.
 #[cfg(test)]
 fn pair_lookup(
@@ -1962,283 +1795,6 @@ mod resolve_transport_secrets_tests {
     }
 }
 
-#[cfg(test)]
-mod resolve_step_secrets_tests {
-    use std::collections::HashMap;
-
-    use super::super::interp::ResolveErrorKind;
-    use super::{
-        Namespace, PreparedStep, PreparedStepRun, RunPrepareSettings, pair_lookup as secret_lookup,
-    };
-
-    fn script_step(script: &str, env: HashMap<String, String>) -> PreparedStep {
-        PreparedStep {
-            run: PreparedStepRun::Script {
-                script: script.to_string(),
-            },
-            env,
-        }
-    }
-
-    fn command_step(argv: &[&str], env: HashMap<String, String>) -> PreparedStep {
-        PreparedStep {
-            run: PreparedStepRun::Command {
-                command: argv.iter().map(|element| (*element).to_string()).collect(),
-            },
-            env,
-        }
-    }
-
-    // Regression for the projection-cache-warmup drop: runs created before #530
-    // persisted `prepare` inside the `run.created` event as
-    // `{ "commands": [...], "timeout_ms": N }` — no `steps` key. Those old
-    // events must still deserialize (as an empty prepare phase) instead of
-    // failing the whole run's projection and silently vanishing from the run
-    // list.
-    #[test]
-    fn deserializes_pre_530_prepare_without_steps() {
-        let old = serde_json::json!({
-            "commands":   ["echo build", "echo test"],
-            "timeout_ms": 60_000,
-        });
-
-        let settings: RunPrepareSettings = serde_json::from_value(old).unwrap();
-
-        assert!(settings.steps.is_empty());
-        assert_eq!(settings.timeout_ms, 60_000);
-    }
-
-    // Any absent field falls back to the product default, so no missing field
-    // can ever hide a run.
-    #[test]
-    fn deserializes_prepare_missing_every_field() {
-        let settings: RunPrepareSettings = serde_json::from_value(serde_json::json!({})).unwrap();
-
-        assert_eq!(settings, RunPrepareSettings::default());
-    }
-
-    #[test]
-    fn literal_step_passes_through() {
-        let settings = RunPrepareSettings {
-            steps:      vec![script_step(
-                "echo hello",
-                HashMap::from([("STAGE".to_string(), "build".to_string())]),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings.resolve_step_secrets(secret_lookup(&[])).unwrap();
-
-        assert_eq!(resolved.steps[0].to_shell_command(), "echo hello");
-        assert_eq!(
-            resolved.steps[0].env.get("STAGE").map(String::as_str),
-            Some("build")
-        );
-    }
-
-    #[test]
-    fn script_resolves_verbatim() {
-        // A script is a raw shell snippet: its token resolves but the result is
-        // NOT shell-quoted — the shell interprets the snippet as written.
-        let settings = RunPrepareSettings {
-            steps:      vec![script_step(
-                "deploy {{ secrets.REGION }} && echo done",
-                HashMap::new(),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings
-            .resolve_step_secrets(secret_lookup(&[("REGION", "us-east-1")]))
-            .unwrap();
-
-        assert_eq!(
-            resolved.steps[0].to_shell_command(),
-            "deploy us-east-1 && echo done"
-        );
-    }
-
-    #[test]
-    fn command_and_env_resolve_secret_tokens() {
-        let settings = RunPrepareSettings {
-            steps:      vec![command_step(
-                &["deploy", "{{ secrets.REGION }}"],
-                HashMap::from([(
-                    "TOKEN".to_string(),
-                    "{{ secrets.DEPLOY_TOKEN }}".to_string(),
-                )]),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings
-            .resolve_step_secrets(secret_lookup(&[
-                ("REGION", "us-east-1"),
-                ("DEPLOY_TOKEN", "secret-token"),
-            ]))
-            .unwrap();
-
-        assert_eq!(resolved.steps[0].to_shell_command(), "deploy us-east-1");
-        assert_eq!(
-            resolved.steps[0].env.get("TOKEN").map(String::as_str),
-            Some("secret-token")
-        );
-    }
-
-    #[test]
-    fn command_arg_with_space_stays_one_token() {
-        // A resolved argv element that contains a space must survive as a
-        // single shell word, not re-split into two.
-        let settings = RunPrepareSettings {
-            steps:      vec![command_step(
-                &["echo", "{{ secrets.MESSAGE }}"],
-                HashMap::new(),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings
-            .resolve_step_secrets(secret_lookup(&[("MESSAGE", "hello world")]))
-            .unwrap();
-
-        let shell = resolved.steps[0].to_shell_command();
-        let tokens = shlex::split(&shell).expect("resolved command should be valid shell");
-        assert_eq!(tokens, vec!["echo".to_string(), "hello world".to_string()]);
-    }
-
-    #[test]
-    fn command_arg_resolving_to_shell_metacharacters_is_not_injected() {
-        // Regression test for the command-injection defect: an interpolated
-        // value containing a single quote and `;` must be resolved THEN quoted
-        // so it stays a single argument and cannot break out to inject extra
-        // shell commands. Quoting the source token *before* resolving (the old
-        // behavior) lets the substituted value escape its quotes.
-        let malicious = "x'; touch PWNED; echo '";
-        let settings = RunPrepareSettings {
-            steps:      vec![command_step(
-                &["echo", "{{ secrets.USER_INPUT }}"],
-                HashMap::new(),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings
-            .resolve_step_secrets(|name| (name == "USER_INPUT").then(|| malicious.to_string()))
-            .unwrap();
-
-        let shell = resolved.steps[0].to_shell_command();
-        // The flattened shell string round-trips to EXACTLY two tokens: the
-        // command and the verbatim payload as a single argument. Pre-fix, the
-        // value was substituted raw inside config-time quotes
-        // (`echo 'x'; touch PWNED; echo ''`), which `shlex::split` parses as
-        // several tokens / an injected `touch PWNED` command — so the round-trip
-        // equality below fails on the buggy code and passes once the value is
-        // resolved THEN quoted.
-        let tokens = shlex::split(&shell).expect("resolved command should be valid shell");
-        assert_eq!(tokens, vec!["echo".to_string(), malicious.to_string()]);
-        assert_eq!(
-            tokens.len(),
-            2,
-            "injected shell syntax leaked extra tokens: {shell}"
-        );
-    }
-
-    #[test]
-    fn missing_secret_in_command_is_hard_error() {
-        let settings = RunPrepareSettings {
-            steps:      vec![command_step(
-                &["deploy", "{{ secrets.REGION }}"],
-                HashMap::new(),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let err = settings
-            .resolve_step_secrets(secret_lookup(&[]))
-            .unwrap_err();
-
-        assert_eq!(err.namespace, Namespace::Secrets);
-        assert_eq!(err.name, "REGION");
-        assert_eq!(err.kind, ResolveErrorKind::Missing);
-    }
-
-    #[test]
-    fn missing_secret_in_step_env_value_is_hard_error() {
-        let settings = RunPrepareSettings {
-            steps:      vec![script_step(
-                "echo hi",
-                HashMap::from([(
-                    "TOKEN".to_string(),
-                    "{{ secrets.DEPLOY_TOKEN }}".to_string(),
-                )]),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let err = settings
-            .resolve_step_secrets(secret_lookup(&[]))
-            .unwrap_err();
-
-        assert_eq!(err.namespace, Namespace::Secrets);
-        assert_eq!(err.name, "DEPLOY_TOKEN");
-        assert_eq!(err.kind, ResolveErrorKind::Missing);
-    }
-
-    #[test]
-    fn script_command_and_env_resolve_secret_tokens() {
-        let settings = RunPrepareSettings {
-            steps:      vec![
-                script_step(
-                    "deploy {{ secrets.REGION }} && echo done",
-                    HashMap::from([(
-                        "TOKEN".to_string(),
-                        "{{ secrets.DEPLOY_TOKEN }}".to_string(),
-                    )]),
-                ),
-                command_step(&["notify", "{{ secrets.MESSAGE }}"], HashMap::new()),
-            ],
-            timeout_ms: 1_000,
-        };
-
-        let resolved = settings
-            .resolve_step_secrets(secret_lookup(&[
-                ("REGION", "us-east-1"),
-                ("DEPLOY_TOKEN", "vault-token"),
-                ("MESSAGE", "hello world"),
-            ]))
-            .unwrap();
-
-        assert_eq!(
-            resolved.steps[0].to_shell_command(),
-            "deploy us-east-1 && echo done"
-        );
-        assert_eq!(
-            resolved.steps[0].env.get("TOKEN").map(String::as_str),
-            Some("vault-token")
-        );
-        assert_eq!(resolved.steps[1].to_shell_command(), "notify 'hello world'");
-    }
-
-    #[test]
-    fn missing_secret_token_is_secret_error() {
-        let settings = RunPrepareSettings {
-            steps:      vec![script_step(
-                "echo hi",
-                HashMap::from([("API_KEY".to_string(), "{{ secrets.API_KEY }}".to_string())]),
-            )],
-            timeout_ms: 1_000,
-        };
-
-        let err = settings
-            .resolve_step_secrets(secret_lookup(&[]))
-            .unwrap_err();
-
-        assert_eq!(err.namespace, Namespace::Secrets);
-        assert_eq!(err.name, "API_KEY");
-        assert_eq!(err.kind, ResolveErrorKind::Missing);
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum McpTransport {
@@ -2463,18 +2019,6 @@ pub enum ResolvedGoalSource {
     /// Goal text was read from a file on disk. The absolute path of that
     /// file is carried for error reporting.
     File { path: std::path::PathBuf },
-}
-
-/// A single prepare step. Exactly one of `script` or `command` must be set.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PrepareStep {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script:  Option<InterpString>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<Vec<InterpString>>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub env:     HashMap<String, InterpString>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

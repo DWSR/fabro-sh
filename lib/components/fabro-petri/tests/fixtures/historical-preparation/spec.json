@@ -1,0 +1,170 @@
+{
+  "run_id": "00000000000000000000000001",
+  "settings": {
+    "project": {
+      "name": null,
+      "description": null,
+      "metadata": {}
+    },
+    "workflow": {
+      "name": null,
+      "description": null,
+      "graph": "",
+      "metadata": {}
+    },
+    "run": {
+      "goal": null,
+      "working_dir": null,
+      "metadata": {},
+      "inputs": {},
+      "model": {
+        "provider": null,
+        "name": null,
+        "fallbacks": {},
+        "controls": {
+          "reasoning_effort": null,
+          "speed": null
+        }
+      },
+      "git": {
+        "author": null
+      },
+      "execution": {
+        "mode": "normal",
+        "approval": "prompt"
+      },
+      "checkpoint": {
+        "exclude_globs": [],
+        "skip_git_hooks": false,
+        "commit_timeout_ms": 30000
+      },
+      "clone": {
+        "enabled": true,
+        "depth": 100
+      },
+      "run_branch": {
+        "enabled": true,
+        "push": true
+      },
+      "environment": {
+        "id": "local",
+        "provider": "local",
+        "image": {
+          "docker": null,
+          "dockerfile": null
+        },
+        "resources": {
+          "cpu": null,
+          "memory": null,
+          "disk": null
+        },
+        "network": {
+          "mode": "allow_all",
+          "allow": []
+        },
+        "lifecycle": {
+          "preserve": false,
+          "stop_on_terminal": true,
+          "auto_stop": null
+        },
+        "labels": {},
+        "env": {
+          "MODE": "scope",
+          "TOKEN": "scope-token"
+        }
+      },
+      "notifications": {},
+      "interviews": {
+        "provider": null,
+        "slack": null
+      },
+      "agent": {
+        "fabro_tools": false,
+        "mcps": {}
+      },
+      "hooks": [],
+      "scm": {
+        "provider": null,
+        "owner": null,
+        "repository": null,
+        "github": null
+      },
+      "pull_request": null,
+      "artifacts": {
+        "include": []
+      },
+      "integrations": {
+        "github": {
+          "permissions": {}
+        }
+      },
+      "prepare": {
+        "steps": [
+          {
+            "type": "script",
+            "script": "test \"$MODE\" = step && test -n \"$TOKEN\" && echo prepared >> prepared",
+            "env": {
+              "MODE": "step",
+              "TOKEN": "{{ secrets.SETUP_TOKEN }}"
+            }
+          }
+        ],
+        "timeout_ms": 300000
+      }
+    }
+  },
+  "graph": {
+    "name": "Prepared",
+    "goal": "",
+    "nodes": {
+      "exit": {
+        "label": "exit",
+        "kind": "exit"
+      },
+      "run_prepare_1": {
+        "label": "Prepare 1",
+        "kind": "command"
+      },
+      "start": {
+        "label": "start",
+        "kind": "start"
+      },
+      "work": {
+        "label": "work",
+        "kind": "command"
+      }
+    },
+    "edges": [
+      {
+        "from": "run_prepare_1",
+        "to": "work"
+      },
+      {
+        "from": "start",
+        "to": "run_prepare_1"
+      },
+      {
+        "from": "work",
+        "to": "exit"
+      }
+    ]
+  },
+  "graph_source": "digraph Prepared {\n            start [shape=Mdiamond]\n            work [shape=parallelogram, script=\"test -f prepared\"]\n            exit [shape=Msquare]\n            start -> work -> exit\n        }",
+  "provenance": {
+    "subject": {
+      "kind": "user",
+      "identity": {
+        "issuer": "fabro:test",
+        "subject": "test-user"
+      },
+      "login": "test",
+      "auth_method": "dev_token"
+    }
+  },
+  "admission": {
+    "graph": {
+      "blob": "0a98daf6b6a7d5e98fed9f136dcb026e47c551ae8627e45445fe6102c958d1fa",
+      "digest": "0a98daf6b6a7d5e98fed9f136dcb026e47c551ae8627e45445fe6102c958d1fa"
+    }
+  }
+}

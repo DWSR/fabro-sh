@@ -240,21 +240,21 @@ mod tests {
     }
 
     #[test]
-    fn prepare_steps_are_stages_of_the_graph_they_run_in() {
+    fn explicit_setup_commands_are_stages_of_the_graph_they_run_in() {
         let admitted = admit(&[
             (
                 "workflow.fabro",
                 r#"digraph Prepared {
                     start [shape=Mdiamond]
+                    setup [shape=parallelogram, script="make setup", timeout="5m", on_failure="exit"]
                     work [prompt="Work"]
                     exit [shape=Msquare]
-                    start -> work -> exit
+                    start -> setup -> work -> exit
                 }"#,
             ),
             (
                 "workflow.toml",
-                "_version = 1\n[run]\ngoal = \"Settings goal\"\n[[run.prepare.steps]]\nscript = \
-                 \"make setup\"\n",
+                "_version = 1\n[run]\ngoal = \"Settings goal\"\n",
             ),
         ]);
 
@@ -262,12 +262,12 @@ mod tests {
 
         assert_eq!(graph.goal(), "Settings goal");
         assert_eq!(
-            graph.node("run_prepare_1").map(|node| node.kind),
+            graph.node("setup").map(|node| node.kind),
             Some(StageHandler::Command)
         );
         assert_eq!(edges(&graph), vec![
-            ("run_prepare_1", "work"),
-            ("start", "run_prepare_1"),
+            ("setup", "work"),
+            ("start", "setup"),
             ("work", "exit"),
         ]);
     }
