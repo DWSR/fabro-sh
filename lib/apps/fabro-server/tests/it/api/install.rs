@@ -956,14 +956,9 @@ async fn token_install_finish_persists_settings_env_and_vault() {
     let settings = std::fs::read_to_string(&config_path).unwrap();
     assert!(settings.contains("https://fabro.example.com"));
     assert!(settings.contains("strategy = \"token\""));
-    assert!(
-        settings.contains("[run.environment]"),
-        "settings.toml should contain [run.environment]"
-    );
-    assert!(
-        !settings.contains("[environments"),
-        "settings.toml should not contain environment catalog entries"
-    );
+    let document: toml::Value = toml::from_str(&settings).unwrap();
+    assert!(document.get("run").is_none());
+    assert!(document.get("environments").is_none());
     assert_sandbox_provider_policy(&settings, true, true, false);
     assert_no_legacy_environment_dir(&temp_dir);
     let default_environment = seeded_default_environment(&temp_dir).await;
@@ -2615,10 +2610,9 @@ async fn sandbox_switching_from_daytona_to_docker_drops_saved_key() {
     .await;
 
     let settings = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        settings.contains("[run.environment]"),
-        "settings.toml should select the default environment"
-    );
+    let document: toml::Value = toml::from_str(&settings).unwrap();
+    assert!(document.get("run").is_none());
+    assert!(document.get("environments").is_none());
     assert_no_legacy_environment_dir(&temp_dir);
     let default_environment = seeded_default_environment(&temp_dir).await;
     assert_eq!(default_environment.settings.provider.to_string(), "docker");
@@ -2730,14 +2724,9 @@ async fn daytona_install_finish_writes_settings_and_vault_secret() {
     .await;
 
     let settings = std::fs::read_to_string(&config_path).unwrap();
-    assert!(
-        settings.contains("[run.environment]"),
-        "settings.toml should contain [run.environment]"
-    );
-    assert!(
-        !settings.contains("[environments"),
-        "settings.toml should not contain environment catalog entries"
-    );
+    let document: toml::Value = toml::from_str(&settings).unwrap();
+    assert!(document.get("run").is_none());
+    assert!(document.get("environments").is_none());
     assert_sandbox_provider_policy(&settings, true, false, true);
     assert_no_legacy_environment_dir(&temp_dir);
     let default_environment = seeded_default_environment(&temp_dir).await;

@@ -498,10 +498,9 @@ pub fn write_sandbox_settings(
     allow_local: bool,
 ) -> Result<()> {
     let root = root_table_mut(doc)?;
-    let run = ensure_table(root, "run")?;
-    let environment = ensure_table(run, "environment")?;
-    environment.insert("id".to_string(), toml::Value::String("default".to_string()));
-
+    // Install seeds `default` in the server catalog separately. Run creation
+    // already selects it when no environment is supplied; writing a [run] table
+    // here would make the CLI warn about settings it does not transmit.
     let server = ensure_table(root, "server")?;
     write_sandbox_provider_policy(server, selection, allow_local)?;
     Ok(())
@@ -1393,20 +1392,12 @@ stale = "remove-me"
     }
 
     #[test]
-    fn write_sandbox_settings_records_run_default_without_environment_catalog() {
+    fn write_sandbox_settings_records_docker_policy_without_run_settings() {
         let mut doc = toml::Value::Table(toml::Table::default());
         write_sandbox_settings(&mut doc, InstallSandboxSelection::Docker, true)
             .expect("docker sandbox selection should succeed");
 
-        assert_eq!(
-            doc.get("run")
-                .and_then(toml::Value::as_table)
-                .and_then(|run| run.get("environment"))
-                .and_then(toml::Value::as_table)
-                .and_then(|env| env.get("id"))
-                .and_then(toml::Value::as_str),
-            Some("default")
-        );
+        assert!(doc.get("run").is_none());
         assert!(doc.get("environments").is_none());
         assert_eq!(sandbox_provider_enabled(&doc, "local"), Some(true));
         assert_eq!(sandbox_provider_enabled(&doc, "docker"), Some(true));
@@ -1414,20 +1405,12 @@ stale = "remove-me"
     }
 
     #[test]
-    fn write_sandbox_settings_records_daytona_policy_without_environment_catalog() {
+    fn write_sandbox_settings_records_daytona_policy_without_run_settings() {
         let mut doc = toml::Value::Table(toml::Table::default());
         write_sandbox_settings(&mut doc, InstallSandboxSelection::Daytona, true)
             .expect("daytona sandbox selection should succeed");
 
-        assert_eq!(
-            doc.get("run")
-                .and_then(toml::Value::as_table)
-                .and_then(|run| run.get("environment"))
-                .and_then(toml::Value::as_table)
-                .and_then(|env| env.get("id"))
-                .and_then(toml::Value::as_str),
-            Some("default")
-        );
+        assert!(doc.get("run").is_none());
         assert!(doc.get("environments").is_none());
         assert_eq!(sandbox_provider_enabled(&doc, "local"), Some(true));
         assert_eq!(sandbox_provider_enabled(&doc, "docker"), Some(false));
