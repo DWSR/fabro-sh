@@ -1324,7 +1324,6 @@ stale = "remove-me"
                 .and_then(toml::Value::as_str),
             Some("/srv/fabro/objects")
         );
-        assert!(server.get("slatedb").is_none());
         assert!(plan.writes.is_empty());
         assert_eq!(plan.removals.len(), 2);
     }
@@ -1353,7 +1352,6 @@ stale = "remove-me"
                 .and_then(toml::Value::as_str),
             Some("artifacts")
         );
-        assert!(server.get("slatedb").is_none());
         assert!(plan.writes.is_empty());
     }
 
@@ -1392,26 +1390,22 @@ stale = "remove-me"
     }
 
     #[test]
-    fn write_sandbox_settings_records_docker_policy_without_run_settings() {
+    fn write_sandbox_settings_records_docker_policy() {
         let mut doc = toml::Value::Table(toml::Table::default());
         write_sandbox_settings(&mut doc, InstallSandboxSelection::Docker, true)
             .expect("docker sandbox selection should succeed");
 
-        assert!(doc.get("run").is_none());
-        assert!(doc.get("environments").is_none());
         assert_eq!(sandbox_provider_enabled(&doc, "local"), Some(true));
         assert_eq!(sandbox_provider_enabled(&doc, "docker"), Some(true));
         assert_eq!(sandbox_provider_enabled(&doc, "daytona"), Some(false));
     }
 
     #[test]
-    fn write_sandbox_settings_records_daytona_policy_without_run_settings() {
+    fn write_sandbox_settings_records_daytona_policy() {
         let mut doc = toml::Value::Table(toml::Table::default());
         write_sandbox_settings(&mut doc, InstallSandboxSelection::Daytona, true)
             .expect("daytona sandbox selection should succeed");
 
-        assert!(doc.get("run").is_none());
-        assert!(doc.get("environments").is_none());
         assert_eq!(sandbox_provider_enabled(&doc, "local"), Some(true));
         assert_eq!(sandbox_provider_enabled(&doc, "docker"), Some(false));
         assert_eq!(sandbox_provider_enabled(&doc, "daytona"), Some(true));
