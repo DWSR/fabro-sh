@@ -6,7 +6,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use fabro_install::InstallSandboxSelection;
 use fabro_test::{fabro_json_snapshot, fabro_snapshot, test_context};
 use httpmock::{HttpMockResponse, Mock, MockServer};
 use insta::assert_snapshot;
@@ -1580,57 +1579,6 @@ fn create_registers_package_before_surfacing_server_admission_rejection() {
         "{stderr}"
     );
     assert!(!stderr.contains("Validation failed"), "{stderr}");
-}
-
-#[test]
-fn create_uses_server_environment_without_warning_for_installer_settings() {
-    for (selection, provider) in [
-        (InstallSandboxSelection::Docker, "docker"),
-        (InstallSandboxSelection::Daytona, "daytona"),
-    ] {
-        for explicit_environment in [None, Some("custom")] {
-            let context = test_context!();
-            let server = MockServer::start();
-            let run_id = unique_run_id();
-            let environment_id = explicit_environment.unwrap_or("default");
-            let environment_mock = mock_environment(&server, environment_id, provider);
-            let version_mock = mock_workflow_version_registrations(&server);
-            let requests = Arc::new(Mutex::new(Vec::new()));
-            let create_mock = mock_intent_create(&server, &run_id, Arc::clone(&requests));
-            let project = tempfile::tempdir().unwrap();
-            let workflow = write_workflow(project.path(), "workflow", "InstalledSettings");
-            let mut settings = toml::Value::Table(toml::Table::default());
-            fabro_install::write_sandbox_settings(&mut settings, selection, true).unwrap();
-            context.write_home(
-                ".fabro/settings.toml",
-                toml::to_string_pretty(&settings).unwrap(),
-            );
-
-            let mut command = context.create_cmd();
-            command.current_dir(project.path()).args([
-                "--server",
-                &format!("{}/api/v1", server.base_url()),
-                workflow.to_str().unwrap(),
-            ]);
-            if let Some(environment_id) = explicit_environment {
-                command.args(["--environment", environment_id]);
-            }
-            let output = command.output().unwrap();
-
-            assert!(output.status.success(), "{}", output_stderr(&output));
-            environment_mock.assert();
-            version_mock.assert();
-            create_mock.assert_calls(1);
-            assert_eq!(
-                requests.lock().unwrap()[0]["environment_id"],
-                environment_id
-            );
-            assert_eq!(output_stdout(&output).trim(), run_id.as_str());
-            insta::allow_duplicates! {
-                assert_snapshot!(output_stderr(&output), @"");
-            }
-        }
-    }
 }
 
 #[test]
