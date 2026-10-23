@@ -105,6 +105,18 @@ fn workflow_settings_default_run_checkpoint_skip_git_hooks_is_false() {
     assert_eq!(json["run"]["checkpoint"]["skip_git_hooks"], false);
 }
 
+#[test]
+fn stored_settings_with_preparation_remain_readable() {
+    let expected = WorkflowSettings::default();
+    let mut stored = serde_json::to_value(&expected).unwrap();
+    stored["run"]["prepare"] = serde_json::json!({
+        "steps": [{"type": "script", "script": "make setup", "env": {}}],
+        "timeout_ms": 300000
+    });
+    let settings: ApiWorkflowSettings = serde_json::from_value(stored).unwrap();
+    assert_eq!(settings, expected);
+}
+
 fn assert_same_type<T: 'static, U: 'static>() {
     assert_eq!(
         TypeId::of::<T>(),

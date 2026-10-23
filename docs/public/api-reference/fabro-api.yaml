@@ -12806,8 +12806,7 @@ components:
         The display graph of a run: the admitted workflow's name, goal,
         stages and edges, read off the graph Petri admitted at create time.
         Lowering artifacts (the goal check, a synthetic fan-in) are left out;
-        the stages are the nodes the workflow declares, imports and
-        `[run.prepare]` steps included.
+        the stages are the nodes the workflow declares, including imported nodes.
       type: object
       required: [name]
       properties:
@@ -15782,7 +15781,6 @@ components:
         - inputs
         - model
         - git
-        - prepare
         - execution
         - checkpoint
         - clone
@@ -15815,8 +15813,6 @@ components:
           $ref: "#/components/schemas/RunModelSettings"
         git:
           $ref: "#/components/schemas/RunGitSettings"
-        prepare:
-          $ref: "#/components/schemas/RunPrepareSettings"
         execution:
           $ref: "#/components/schemas/RunExecutionSettings"
         checkpoint:
@@ -15965,63 +15961,6 @@ components:
           type: ["string", "null"]
         email:
           type: ["string", "null"]
-
-    RunPrepareSettings:
-      type: object
-      required: [steps, timeout_ms]
-      properties:
-        steps:
-          type: array
-          items:
-            $ref: "#/components/schemas/PreparedStep"
-        timeout_ms:
-          type: integer
-          format: int64
-
-    PreparedStep:
-      description: |
-        A single resolved prepare step. The runnable part preserves the
-        script-vs-argv distinction via the `type` discriminator: a `script`
-        is a raw shell snippet kept verbatim, while a `command` is an argv
-        whose elements are shell-quoted and joined at the run boundary (after
-        `{{ secrets.* }}` resolution) so an interpolated value cannot inject shell
-        syntax. Optional per-step `env` is shared by both shapes.
-      type: object
-      required: [type]
-      oneOf:
-        - $ref: "#/components/schemas/PreparedScriptStep"
-        - $ref: "#/components/schemas/PreparedCommandStep"
-      discriminator:
-        propertyName: type
-        mapping:
-          script: "#/components/schemas/PreparedScriptStep"
-          command: "#/components/schemas/PreparedCommandStep"
-
-    PreparedScriptStep:
-      type: object
-      required: [type, script]
-      properties:
-        type:
-          type: string
-          enum: [script]
-        script:
-          type: string
-        env:
-          $ref: "#/components/schemas/StringMap"
-
-    PreparedCommandStep:
-      type: object
-      required: [type, command]
-      properties:
-        type:
-          type: string
-          enum: [command]
-        command:
-          type: array
-          items:
-            type: string
-        env:
-          $ref: "#/components/schemas/StringMap"
 
     RunExecutionSettings:
       type: object

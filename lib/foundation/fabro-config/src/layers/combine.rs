@@ -14,8 +14,8 @@ use super::cli::{CliAuthLayer, CliLoggingLayer, CliTargetLayer};
 use super::environment::EnvironmentDockerfileLayer;
 use super::run::{
     HookAgentMarker, HookEntry, HookTlsMode, InterviewProviderLayer, ModelRefOrSplice,
-    NotificationProviderLayer, RunArtifactsLayer, RunCheckpointLayer, RunGoalLayer,
-    RunPrepareLayer, ScmGitHubLayer, StringOrSplice,
+    NotificationProviderLayer, RunArtifactsLayer, RunCheckpointLayer, RunGoalLayer, ScmGitHubLayer,
+    StringOrSplice,
 };
 use super::server::{
     ObjectStoreLocalLayer, ObjectStoreS3Layer, ServerApiLayer, ServerAuthGithubLayer,
@@ -135,7 +135,6 @@ impl_combine_self!(
     NotificationProviderLayer,
     RunArtifactsLayer,
     RunGoalLayer,
-    RunPrepareLayer,
     ScmGitHubLayer,
     ObjectStoreLocalLayer,
     ObjectStoreS3Layer,

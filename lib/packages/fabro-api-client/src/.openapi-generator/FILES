@@ -312,9 +312,6 @@ models/preflight-check-result.ts
 models/preflight-check-section.ts
 models/preflight-response.ts
 models/preflight-workflow-summary.ts
-models/prepared-command-step.ts
-models/prepared-script-step.ts
-models/prepared-step.ts
 models/preview-url-request.ts
 models/preview-url-response.ts
 models/principal-agent.ts
@@ -418,7 +415,6 @@ models/run-model.ts
 models/run-namespace.ts
 models/run-origin.ts
 models/run-pair-status-response.ts
-models/run-prepare-settings.ts
 models/run-projection.ts
 models/run-provenance.ts
 models/run-question.ts

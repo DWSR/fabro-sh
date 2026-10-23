@@ -242,8 +242,8 @@ root = "{}"
 [run.execution]
 approval = "auto"
 
-[[run.prepare.steps]]
-script = "cli-setup"
+[run.checkpoint]
+exclude_globs = ["cli-cache/**"]
 "#,
             storage_dir.display()
         ),
@@ -257,8 +257,8 @@ script = "cli-setup"
         r#"
 _version = 1
 
-[[run.prepare.steps]]
-script = "project-setup"
+[run.checkpoint]
+exclude_globs = ["project-cache/**"]
 "#,
     )
     .expect("external workflow project config should write");
@@ -289,8 +289,8 @@ goal = "Ship it"
 [run.model]
 name = "claude-sonnet-4-6"
 
-[[run.prepare.steps]]
-script = "workflow-setup"
+[run.checkpoint]
+exclude_globs = ["workflow-cache/**"]
 "#,
     )
     .expect("external workflow config should write");
@@ -366,12 +366,9 @@ fn create_explicit_workflow_warns_without_transmitting_machine_or_project_run_se
         run_spec["settings"]["run"]["model"]["name"].as_str(),
         Some("gpt-5.4-pro")
     );
-    // run.prepare.steps replaces the whole ordered list across layers. A
-    // `script` step serializes with the `type` discriminator that preserves the
-    // script-vs-argv distinction in the run spec wire shape.
     assert_eq!(
-        run_spec["settings"]["run"]["prepare"]["steps"],
-        serde_json::json!([{ "type": "script", "script": "workflow-setup" }])
+        run_spec["settings"]["run"]["checkpoint"]["exclude_globs"],
+        serde_json::json!(["workflow-cache/**"])
     );
 }
 

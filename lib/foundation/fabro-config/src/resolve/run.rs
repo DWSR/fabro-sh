@@ -6,11 +6,11 @@ use fabro_types::settings::interp::ResolveCtx;
 use fabro_types::settings::run::{
     ArtifactsSettings, GitAuthorSettings, HookDefinition, HookType, InterviewProviderSettings,
     McpServerSettings, McpTransport, MergeStrategy, NotificationProviderSettings,
-    NotificationRouteSettings, PreparedStep, PreparedStepRun, PullRequestSettings,
-    ResolvedMcpEntry, RunAgentSettings, RunBranchSettings, RunCheckpointSettings, RunCloneSettings,
-    RunExecutionSettings, RunGitSettings, RunGoal, RunIntegrationsGithubSettings,
-    RunIntegrationsSettings, RunInterviewsSettings, RunModelControls, RunModelSettings,
-    RunNamespace, RunPrepareSettings, RunScmSettings, ScmGitHubSettings, TlsMode,
+    NotificationRouteSettings, PullRequestSettings, ResolvedMcpEntry, RunAgentSettings,
+    RunBranchSettings, RunCheckpointSettings, RunCloneSettings, RunExecutionSettings,
+    RunGitSettings, RunGoal, RunIntegrationsGithubSettings, RunIntegrationsSettings,
+    RunInterviewsSettings, RunModelControls, RunModelSettings, RunNamespace, RunScmSettings,
+    ScmGitHubSettings, TlsMode,
 };
 use fabro_util::workspace_glob::WorkspaceGlob;
 
@@ -20,8 +20,8 @@ use crate::{
     InterviewsLayer, McpEntryLayer, MergeMap, ModelRefOrSplice, NotificationProviderLayer,
     NotificationRouteLayer, RunAgentLayer, RunArtifactsLayer, RunCheckpointLayer, RunCloneLayer,
     RunExecutionLayer, RunGitLayer, RunGoalLayer, RunIntegrationsGithubLayer, RunIntegrationsLayer,
-    RunLayer, RunModelLayer, RunPrepareLayer, RunPullRequestLayer, RunRunBranchLayer, RunScmLayer,
-    StickyMap, StringOrSplice,
+    RunLayer, RunModelLayer, RunPullRequestLayer, RunRunBranchLayer, RunScmLayer, StickyMap,
+    StringOrSplice,
 };
 
 pub fn resolve_run(
@@ -51,7 +51,6 @@ pub fn resolve_run(
         inputs: layer.inputs.clone().unwrap_or_default(),
         model: resolve_model(layer.model.as_ref()),
         git: resolve_git(layer.git.as_ref()),
-        prepare: resolve_prepare(layer.prepare.as_ref(), errors),
         execution: resolve_execution(layer.execution.as_ref()),
         checkpoint: resolve_checkpoint(layer.checkpoint.as_ref()),
         clone,
@@ -261,61 +260,6 @@ fn resolve_git(git: Option<&RunGitLayer>) -> RunGitSettings {
             name:  author.name.clone(),
             email: author.email.clone(),
         }),
-    }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "intentional source preservation: prepare step commands and per-step env are carried \
-              in source form so `fabro validate` stays portable; secret tokens resolve and \
-              unsupported tokens fail at the run boundary in \
-              fabro_types::settings::run::RunPrepareSettings::resolve_step_secrets"
-)]
-fn resolve_prepare(
-    prepare: Option<&RunPrepareLayer>,
-    errors: &mut Vec<ResolveError>,
-) -> RunPrepareSettings {
-    let prepare = prepare.expect("defaults.toml should provide run.prepare defaults");
-
-    let mut steps = Vec::new();
-    for (index, step) in prepare.steps.iter().enumerate() {
-        let run = match (&step.script, &step.command) {
-            // A `script` is a raw shell snippet. Carry it verbatim so the shell
-            // interprets it after late secret resolution.
-            (Some(script), None) => PreparedStepRun::Script {
-                script: script.as_source(),
-            },
-            // A `command` is an argv: carry it as a vector of element source
-            // strings — neither pre-joined nor shell-quoted here. Secret tokens
-            // resolve at the run boundary, and only the resolved value is
-            // shell-quoted (resolve-then-quote), so an interpolated value can
-            // never break out of its argument and inject shell syntax.
-            (None, Some(argv)) => PreparedStepRun::Command {
-                command: argv.iter().map(InterpString::as_source).collect(),
-            },
-            (Some(_), Some(_)) | (None, None) => {
-                errors.push(ResolveError::Invalid {
-                    path:   format!("run.prepare.steps[{index}]"),
-                    reason: "exactly one of script or command must be set".to_string(),
-                });
-                continue;
-            }
-        };
-        steps.push(PreparedStep {
-            run,
-            env: step
-                .env
-                .iter()
-                .map(|(key, value)| (key.clone(), value.as_source()))
-                .collect(),
-        });
-    }
-
-    RunPrepareSettings {
-        steps,
-        timeout_ms: prepare
-            .timeout
-            .map_or(300_000, |timeout| timeout.as_millis()),
     }
 }
 
@@ -780,100 +724,5 @@ fn resolve_artifacts(
         include: artifacts
             .map(|artifacts| artifacts.include.clone())
             .unwrap_or_default(),
-    }
-}
-
-#[cfg(test)]
-mod resolve_prepare_tests {
-    use std::collections::HashMap;
-
-    use fabro_types::settings::InterpString;
-    use fabro_types::settings::run::PreparedStepRun;
-
-    use super::{ResolveError, resolve_prepare};
-    use crate::{PrepareStep, RunPrepareLayer};
-
-    fn resolve(layer: &RunPrepareLayer) -> Vec<super::PreparedStep> {
-        let mut errors: Vec<ResolveError> = Vec::new();
-        let settings = resolve_prepare(Some(layer), &mut errors);
-        assert!(errors.is_empty(), "unexpected resolve errors: {errors:?}");
-        settings.steps
-    }
-
-    #[test]
-    fn carries_per_step_env_through() {
-        let layer = RunPrepareLayer {
-            steps:   vec![PrepareStep {
-                script:  Some(InterpString::parse("setup")),
-                command: None,
-                env:     HashMap::from([(
-                    "TOKEN".to_string(),
-                    InterpString::parse("{{ env.DEPLOY_TOKEN }}"),
-                )]),
-            }],
-            timeout: None,
-        };
-
-        let steps = resolve(&layer);
-
-        assert_eq!(steps.len(), 1);
-        assert_eq!(steps[0].run, PreparedStepRun::Script {
-            script: "setup".to_string(),
-        });
-        // The per-step env survives config resolution in source form. The
-        // unsupported token fails later at the run boundary.
-        assert_eq!(
-            steps[0].env.get("TOKEN").map(String::as_str),
-            Some("{{ env.DEPLOY_TOKEN }}")
-        );
-    }
-
-    #[test]
-    fn argv_command_elements_are_carried_in_source_form() {
-        let layer = RunPrepareLayer {
-            steps:   vec![PrepareStep {
-                script:  None,
-                command: Some(vec![
-                    InterpString::parse("echo"),
-                    InterpString::parse("hello world"),
-                    InterpString::parse("{{ env.USER_INPUT }}"),
-                ]),
-                env:     HashMap::new(),
-            }],
-            timeout: None,
-        };
-
-        let steps = resolve(&layer);
-
-        // Argv elements are carried as separate source strings, NOT joined and
-        // NOT shell-quoted here. Quoting happens after late interpolation at
-        // the run boundary, so a resolved value (not the source token) is what
-        // gets quoted.
-        assert_eq!(steps[0].run, PreparedStepRun::Command {
-            command: vec![
-                "echo".to_string(),
-                "hello world".to_string(),
-                "{{ env.USER_INPUT }}".to_string(),
-            ],
-        });
-    }
-
-    #[test]
-    fn script_is_kept_verbatim() {
-        let layer = RunPrepareLayer {
-            steps:   vec![PrepareStep {
-                script:  Some(InterpString::parse("echo hello && ls -la")),
-                command: None,
-                env:     HashMap::new(),
-            }],
-            timeout: None,
-        };
-
-        let steps = resolve(&layer);
-
-        // A script is a raw shell snippet, not an argv: it is carried verbatim.
-        assert_eq!(steps[0].run, PreparedStepRun::Script {
-            script: "echo hello && ls -la".to_string(),
-        });
     }
 }
