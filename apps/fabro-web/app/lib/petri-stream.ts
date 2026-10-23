@@ -6,8 +6,9 @@
  * keyed by `stream_seq`. The mapping from items to views follows
  * `lib/components/fabro-petri/VIEWS.md`.
  */
-import { StageOutcome, StageState } from "@qltysh/fabro-api-client";
+import { ReviewTargetKind, StageOutcome, StageState } from "@qltysh/fabro-api-client";
 import type {
+  ReviewTarget,
   RunProjection,
   RunStreamItem,
   StageProjection,
@@ -156,6 +157,18 @@ export function itemsForStage(
 
 // ── Questions ───────────────────────────────────────────────────────────
 
+/** Match the pending-question projection's document reference mapping. */
+function parseReviewTarget(value: unknown): ReviewTarget | null {
+  if (!isRecord(value)) return null;
+  if (value.kind != null && value.kind !== ReviewTargetKind.DOCUMENT) return null;
+  const label = getString(value, "label")?.trim();
+  const url = getString(value, "url")?.trim();
+  if (!label || !url) return null;
+  // Keep the recorded URL (including query and fragment). The shared
+  // question renderer checks URL safety before creating a link.
+  return { label, url, kind: ReviewTargetKind.DOCUMENT };
+}
+
 function parseOptions(value: unknown): InterviewOption[] {
   if (!Array.isArray(value)) return [];
   const out: InterviewOption[] = [];
@@ -243,7 +256,7 @@ export function parsePetriInterviewPairs(stream: PetriStream): HumanInterviewPai
           allowFreeform: getBool(question, "freeform") === true,
           timeoutSeconds: timeoutMs !== undefined ? Math.round(timeoutMs / 1000) : null,
           contextDisplay: getString(question, "context") ?? null,
-          reviewTarget: null,
+          reviewTarget: parseReviewTarget(question?.reference),
         },
         resolution: null,
       });

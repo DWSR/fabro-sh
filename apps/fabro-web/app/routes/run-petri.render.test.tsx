@@ -25,11 +25,13 @@ import {
   itemsForStage,
   parallelOverviewFromProjection,
   parsePetriInterviewPairs,
+  petriParsed,
   platformRecordsOf,
   reducerTranscriptFromProjection,
   stagesFromProjection,
 } from "../lib/petri-stream";
 import { setupReactTestEnv } from "../lib/test-utils";
+import { getObject } from "../lib/unknown";
 import { StreamEventsView } from "./run-events";
 import { StageChatView, buildPetriStageActivity } from "./run-stages";
 
@@ -281,5 +283,49 @@ describe("a human gate answered through the API", () => {
   test("no question is left pending in the projection", () => {
     expect(Object.keys(fixture.projection.pending_interviews)).toEqual([]);
     expect(stages.map((stage) => stage.id)).toEqual(["start@1", "gate@1", "no@1", "exit@1"]);
+  });
+
+  test.each([
+    ["https://example.com/review/%2Fdraft?revision=one&token=a%2Bb#feedback", true],
+    ["javascript:alert(1)", false],
+    ["https://user:password@example.com/review", false],
+    ["/relative/review", false],
+    ["ftp://example.com/review", false],
+  ])("answered Q&A preserves safe review links after replay: %s", (url, linked) => {
+    // Add a reference to the real API-captured gate stream; keep its delivered
+    // answer and settled projection, which has no pending interview left.
+    const stream = structuredClone(fixture.stream);
+    const question = stream.map((item) => getObject(petriParsed(item), "question")).find(Boolean)!;
+    question.text = "Review the design document, then choose the next action.";
+    question.reference = { label: "Design review", url, kind: "document" };
+    const gate = stages.find((stage) => stage.id === "gate@1")!;
+
+    for (const events of [stream, JSON.parse(JSON.stringify(stream))]) {
+      let renderer!: TestRenderer.ReactTestRenderer;
+      act(() => {
+        renderer = TestRenderer.create(
+          <HumanQA stage={gate} pairs={parsePetriInterviewPairs(events)} />,
+        );
+      });
+      try {
+        const links = renderer.root.findAllByType("a");
+        expect(links).toHaveLength(linked ? 1 : 0);
+        if (linked) {
+          expect(links[0].props).toMatchObject({
+            href: url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            referrerPolicy: "no-referrer",
+          });
+          expect(links[0].findByType("span").children).toEqual(["Design review"]);
+        } else {
+          expect(JSON.stringify(renderer.toJSON())).toContain(question.text);
+        }
+        expect(JSON.stringify(renderer.toJSON())).toContain("Answered");
+        expect(JSON.stringify(renderer.toJSON())).toContain("dev");
+      } finally {
+        act(() => renderer.unmount());
+      }
+    }
   });
 });
