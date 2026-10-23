@@ -1763,6 +1763,7 @@ auth = { type = "bearer" }
 [providers."my.gw".models."model.v1"]
 display_name = "Model"
 api_model = "wire-model"
+capabilities = { text = true }
 "#
         .to_string();
         if explicit_profile {
