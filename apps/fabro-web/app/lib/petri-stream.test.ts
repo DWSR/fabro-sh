@@ -106,6 +106,81 @@ describe("questions", () => {
   test("a run without a gate asks nothing", () => {
     expect(parsePetriInterviewPairs(command.stream)).toEqual([]);
   });
+
+  function question(reference: unknown, id = "review#1", seq = 1): RunStreamItem {
+    return {
+      run_id: "run-review",
+      stream_seq: seq,
+      kind: "petri",
+      id: `execution 0/${seq}/0`,
+      recorded_at: 1_000 * seq,
+      item: {
+        record: { body: { event: "step.progress.recorded" } },
+        derived: {
+          parsed: {
+            kind: "question",
+            question: { id, text: "Review the document.", reference },
+          },
+        },
+      },
+    };
+  }
+
+  const reference = {
+    label: "Design review",
+    url: "https://example.com/review/%2Fdraft?revision=one&token=a%2Bb#feedback",
+    kind: "document",
+  };
+
+  test("each question keeps its original review target through answer and replay", () => {
+    const asked = question(reference);
+    const answered: RunStreamItem = {
+      ...asked,
+      stream_seq: 2,
+      id: "execution 0/2/0",
+      recorded_at: 2_000,
+      item: {
+        record: { body: { event: "control.requested" } },
+        derived: { deliverable: true, answer: { question: "review#1", choice: "Y" } },
+      },
+    };
+    const nextReference = { ...reference, label: "Revised design", url: "https://example.com/next" };
+    const stream = [asked, answered, question(nextReference, "review#2", 3)];
+    const pending = parsePetriInterviewPairs([asked]);
+    expect(pending[0].question.reviewTarget).toEqual(reference);
+    expect(pending[0].resolution).toBeNull();
+
+    const pairs = parsePetriInterviewPairs(stream);
+    expect(pairs.map((pair) => pair.question.reviewTarget)).toEqual([reference, nextReference]);
+    expect(pairs[0].resolution).toMatchObject({ kind: "answered", answer: "Y" });
+    expect(pairs[1].resolution).toBeNull();
+    // A fresh page reads serialized events, with no live question or context cache.
+    expect(parsePetriInterviewPairs(JSON.parse(JSON.stringify(stream)))).toEqual(pairs);
+  });
+
+  test.each([undefined, null])("a reference with kind %p is a document, like the pending projection", (kind) => {
+    const [pair] = parsePetriInterviewPairs([question({ ...reference, kind })]);
+    expect(pair.question.reviewTarget).toEqual(reference);
+  });
+
+  test.each([
+    undefined,
+    null,
+    "https://example.com/review",
+    [],
+    {},
+    { ...reference, kind: "pull_request" },
+    { ...reference, kind: "" },
+    { ...reference, kind: 42 },
+    { ...reference, label: 42 },
+    { ...reference, label: "  " },
+    { ...reference, url: 42 },
+    { ...reference, url: "  " },
+  ].map((value) => [value]))("a missing or malformed reference falls back to question text: %p", (value) => {
+    const [pair] = parsePetriInterviewPairs([question(value)]);
+    expect(pair.question.reviewTarget).toBeNull();
+    expect(pair.question.question).toBe("Review the document.");
+  });
 });
 
 describe("run phases", () => {
