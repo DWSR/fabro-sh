@@ -1730,6 +1730,84 @@ async fn resolve_llm_client_reads_openai_token_from_vault() {
 }
 
 #[tokio::test]
+async fn dotted_provider_starts_and_uses_its_vault_key_with_inferred_or_explicit_profile() {
+    for explicit_profile in [false, true] {
+        let upstream = MockServer::start_async().await;
+        let completion = upstream
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1/chat/completions")
+                    .header("authorization", "Bearer dotted-provider-test-key")
+                    .json_body_includes(r#"{"model":"wire-model"}"#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .json_body(json!({
+                        "id": "chatcmpl-dotted",
+                        "object": "chat.completion",
+                        "created": 1_700_000_000,
+                        "model": "wire-model",
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "OK"},
+                            "finish_reason": "stop"
+                        }],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                    }));
+            })
+            .await;
+        let mut overlay = r#"
+[providers."my.gw"]
+display_name = "Gateway"
+base_url = "http://unused.invalid"
+auth = { type = "bearer" }
+[providers."my.gw".models."model.v1"]
+display_name = "Model"
+api_model = "wire-model"
+"#
+        .to_string();
+        if explicit_profile {
+            overlay.push_str(
+                r#"
+[providers."my.gw".metadata.agent]
+profile = "openai"
+"#,
+            );
+        }
+        let state = TestAppStateBuilder::new()
+            .runtime_settings(default_test_server_settings(), RunLayer::default())
+            .env_lookup(|_| None)
+            .llm_overlay_toml(&overlay)
+            .provider_base_url("my.gw", upstream.base_url())
+            .build();
+        state
+            .stores
+            .vault
+            .set(
+                "MY_GW_API_KEY",
+                "dotted-provider-test-key",
+                SecretType::Token,
+                None,
+            )
+            .await
+            .unwrap();
+        let llm = state.resolve_llm_client().await.unwrap();
+        let response = llm
+            .client
+            .complete(
+                LlmRequest::builder()
+                    .model("my.gw/model.v1")
+                    .user("Hello")
+                    .build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.text(), "OK");
+        completion.assert_async().await;
+    }
+}
+
+#[tokio::test]
 async fn resolve_llm_client_ignores_env_lookup_provider_tokens() {
     let state = test_app_state_with_env_lookup(
         default_test_server_settings(),

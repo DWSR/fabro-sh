@@ -2155,27 +2155,12 @@ fn install_catalog_with_base_url(
     let Some(base_url) = state.upstreams.provider_base_urls.get(provider.id()) else {
         return Ok(Catalog::clone(&INSTALL_CATALOG));
     };
-    let overlay = fabro_config::LlmLayer(
-        toml::from_str(&format!(
-            "[providers.{}]\nbase_url = {}\n",
-            toml_key(provider.id().as_str()),
-            toml::Value::String(base_url.clone())
-        ))
-        .context("install provider base URL overlay should parse")?,
-    );
+    let overlay = fabro_config::LlmLayer::from_providers([(
+        provider.id().to_string(),
+        toml::Table::from_iter([("base_url".into(), toml::Value::String(base_url.clone()))]),
+    )]);
     fabro_llm::build_catalog(&overlay, &|_| None)
         .context("install catalog with provider base URL override should build")
-}
-
-fn toml_key(key: &str) -> String {
-    if key
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        key.to_string()
-    } else {
-        format!("{key:?}")
-    }
 }
 
 #[cfg(test)]

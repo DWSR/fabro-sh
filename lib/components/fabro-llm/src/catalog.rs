@@ -17,6 +17,7 @@ use lithos_llm::catalog::{
     adapter_ids, codec_ids,
 };
 use serde::Deserialize;
+use toml::{Table, Value};
 
 /// The metadata namespace agent harnesses read.
 const AGENT_METADATA_NAMESPACE: &str = "agent";
@@ -30,75 +31,59 @@ pub fn build_catalog(
     overlay: &LlmLayer,
     env_lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Catalog, CatalogError> {
-    let mut builder = Catalog::builder().with_builtin();
-    if !overlay.is_empty() {
-        let mut document = overlay.to_overlay_toml();
-        document.insert_str(0, "schema_version = 1\n");
-        builder = builder.toml_layer("settings [llm]", &document)?;
-    }
-    if let Some(base_url) = env_lookup(EnvVars::OPENAI_BASE_URL) {
-        let document = format!(
-            "schema_version = 1\n[providers.openai]\nbase_url = {}\n",
-            toml::Value::String(base_url.trim_end_matches("/v1").to_string())
-        );
-        builder = builder.toml_layer("OPENAI_BASE_URL", &document)?;
-    }
-    let catalog = builder.build()?;
-    // The coding agent reads a provider's harness profile from
-    // `metadata.agent.profile` and refuses a provider without one. The lithos
-    // built-ins all declare theirs; an operator-defined provider that does
-    // not gets the profile its wire protocol implies, layered on last.
+    let base_url_overlay = env_lookup(EnvVars::OPENAI_BASE_URL).map(|base_url| {
+        LlmLayer::from_providers([(
+            "openai".into(),
+            Table::from_iter([(
+                "base_url".into(),
+                Value::String(base_url.trim_end_matches("/v1").to_string()),
+            )]),
+        )])
+    });
+    let build_base = || {
+        let mut builder = Catalog::builder().with_builtin();
+        if !overlay.is_empty() {
+            builder = add_catalog_layer(builder, "settings [llm]", overlay)?;
+        }
+        if let Some(overlay) = &base_url_overlay {
+            builder = add_catalog_layer(builder, "OPENAI_BASE_URL", overlay)?;
+        }
+        Ok::<_, CatalogError>(builder)
+    };
+    let catalog = build_base()?.build()?;
+    // Pebble needs provider-level profile metadata. Fill only missing profiles
+    // after the operator overlay has selected the provider's wire protocol.
     let implied = implied_agent_profiles(&catalog);
     if implied.is_empty() {
         return Ok(catalog);
     }
-    let mut builder = Catalog::builder().with_builtin();
-    if !overlay.is_empty() {
-        let mut document = overlay.to_overlay_toml();
-        document.insert_str(0, "schema_version = 1\n");
-        builder = builder.toml_layer("settings [llm]", &document)?;
-    }
-    if let Some(base_url) = env_lookup(EnvVars::OPENAI_BASE_URL) {
-        let document = format!(
-            "schema_version = 1\n[providers.openai]\nbase_url = {}\n",
-            toml::Value::String(base_url.trim_end_matches("/v1").to_string())
-        );
-        builder = builder.toml_layer("OPENAI_BASE_URL", &document)?;
-    }
-    builder
-        .toml_layer("implied agent profiles", &implied)
-        .and_then(CatalogBuilder::build)
+    add_catalog_layer(build_base()?, "implied agent profiles", &implied)?.build()
 }
 
-/// A TOML layer declaring `metadata.agent.profile` for every provider that
-/// has none, as the profile implied by the provider's adapter. Empty when
-/// every provider already says.
-fn implied_agent_profiles(catalog: &Catalog) -> String {
-    use std::fmt::Write as _;
+fn add_catalog_layer(
+    builder: CatalogBuilder,
+    name: &str,
+    overlay: &LlmLayer,
+) -> Result<CatalogBuilder, CatalogError> {
+    // The fixed schema declaration is outside the settings overlay. All
+    // dynamic keys and values are serialized together by the TOML library.
+    let document = format!("schema_version = 1\n{}", overlay.to_overlay_toml());
+    builder.toml_layer(name, &document)
+}
 
-    let mut document = String::new();
-    for provider in catalog.providers() {
+/// Metadata for providers without an explicit harness profile.
+fn implied_agent_profiles(catalog: &Catalog) -> LlmLayer {
+    LlmLayer::from_providers(catalog.providers().filter_map(|provider| {
         if agent_metadata(provider.metadata()).profile.is_some() {
-            continue;
+            return None;
         }
-        let profile = adapter_agent_profile(provider);
-        let _ = writeln!(
-            document,
-            "[providers.{}.metadata.agent]\nprofile = {}\n",
-            provider.id(),
-            toml::Value::String(
-                serde_json::to_value(profile)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
-                    .unwrap_or_else(|| "openai".to_string())
-            ),
-        );
-    }
-    if document.is_empty() {
-        return document;
-    }
-    document.insert_str(0, "schema_version = 1\n");
-    document
+        let profile = Value::try_from(adapter_agent_profile(provider))
+            .expect("agent profiles serialize as strings");
+        let agent = Table::from_iter([("profile".into(), profile)]);
+        let metadata = Table::from_iter([("agent".into(), Value::Table(agent))]);
+        let fields = Table::from_iter([("metadata".into(), Value::Table(metadata))]);
+        Some((provider.id().to_string(), fields))
+    }))
 }
 
 /// The profile a provider's wire protocol implies, for a provider whose
@@ -311,6 +296,111 @@ capabilities = { text = true, tools = true }
             agent_profile(&catalog, "acme", Some("acme-llama")),
             Some(AgentProfileKind::OpenAi)
         );
+    }
+
+    #[test]
+    fn dotted_provider_profiles_preserve_identity_metadata_and_model_overrides() {
+        let source = r#"
+[providers."my.gw"]
+display_name = "Gateway"
+base_url = "http://127.0.0.1:1234/v1"
+auth = { type = "bearer" }
+[providers."my.gw".metadata.agent]
+reasoning_by_default = false
+[providers."my.gw".models."model.v1"]
+display_name = "Model"
+api_model = "wire-model"
+[providers."my.gw".models."model.v1".metadata.agent]
+profile = "anthropic"
+[providers.my]
+display_name = "Sibling"
+base_url = "http://127.0.0.1:5678"
+auth = { type = "none" }
+[providers.my.metadata.agent]
+profile = "gemini"
+"#;
+        for enabled in [true, false] {
+            let mut overlay = LlmLayer(toml::from_str(source).unwrap());
+            overlay.0["providers"]["my.gw"]
+                .as_table_mut()
+                .unwrap()
+                .insert("enabled".into(), Value::Boolean(enabled));
+            let catalog = build_catalog(&overlay, &|name| {
+                (name == EnvVars::OPENAI_BASE_URL).then(|| "http://127.0.0.1:4321/v1".into())
+            })
+            .unwrap();
+            let gateway = catalog.provider("my.gw").unwrap();
+            assert_eq!(gateway.id().as_str(), "my.gw");
+            assert_eq!(gateway.base_url(), "http://127.0.0.1:1234/v1");
+            assert_eq!(
+                agent_metadata(gateway.metadata()).profile,
+                Some(AgentProfileKind::OpenAi)
+            );
+            assert_eq!(
+                agent_metadata(gateway.metadata()).reasoning_by_default,
+                Some(false)
+            );
+            assert_eq!(gateway.model("model.v1").unwrap().api_model(), "wire-model");
+            assert_eq!(
+                model_agent_profile(gateway, gateway.model("model.v1").unwrap()),
+                AgentProfileKind::Anthropic
+            );
+            assert_eq!(
+                fabro_auth::expected_secret_name(gateway).as_deref(),
+                Some("MY_GW_API_KEY")
+            );
+            assert_eq!(
+                agent_profile(&catalog, "my", None),
+                Some(AgentProfileKind::Gemini)
+            );
+            assert_eq!(catalog.enabled_provider("my.gw").is_some(), enabled);
+            assert_eq!(
+                catalog.provider("openai").unwrap().base_url(),
+                "http://127.0.0.1:4321"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_names_remain_literal_with_inferred_and_explicit_profiles() {
+        for id in [
+            "my.gw", "my.gw.v2", "my-gw", "my_gw", ".gateway", "gateway.",
+        ] {
+            for explicit in [None, Some("openai"), Some("gemini")] {
+                let mut fields: Table = toml::from_str(
+                    r#"
+display_name = "Gateway"
+base_url = "http://127.0.0.1:1234"
+auth = { type = "none" }
+"#,
+                )
+                .unwrap();
+                if let Some(profile) = explicit {
+                    fields.insert(
+                        "metadata".into(),
+                        Value::Table(Table::from_iter([(
+                            "agent".into(),
+                            Value::Table(Table::from_iter([(
+                                "profile".into(),
+                                Value::String(profile.into()),
+                            )])),
+                        )])),
+                    );
+                }
+                let overlay = LlmLayer::from_providers([(id.into(), fields)]);
+                let catalog = build_catalog(&overlay, &|_| None).unwrap();
+                assert_eq!(catalog.provider(id).unwrap().id().as_str(), id);
+                assert_eq!(
+                    agent_profile(&catalog, id, None),
+                    Some(if explicit == Some("gemini") {
+                        AgentProfileKind::Gemini
+                    } else {
+                        AgentProfileKind::OpenAi
+                    })
+                );
+                assert!(catalog.provider("my").is_err());
+            }
+        }
     }
 
     /// The implied profile follows the provider's first codec, so a host that
