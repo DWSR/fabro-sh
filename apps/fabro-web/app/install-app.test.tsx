@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { AxiosAdapter } from "axios";
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import TestRenderer, { act } from "react-test-renderer";
+import { SWRConfig } from "swr";
 
 import InstallApp from "./install-app";
 import { generatedAxios } from "./lib/api-client";
@@ -24,6 +25,15 @@ const SESSION_RESPONSE = {
 };
 
 const originalAdapter = generatedAxios.defaults.adapter;
+
+function createInstallRenderer(children: ReactNode) {
+  // Each test gets its own session cache and in-flight request registry.
+  return TestRenderer.create(
+    <SWRConfig value={{ provider: () => new Map() }}>
+      {children}
+    </SWRConfig>,
+  );
+}
 
 type TestWindow = {
   history: {
@@ -209,7 +219,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <StrictMode>
             <MemoryRouter initialEntries={["/install/github?error=github-app-manifest-conversion-failed"]}>
               <Routes>
@@ -281,7 +291,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/github/done?token=test-install-token"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -369,7 +379,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/object-store"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -465,7 +475,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/object-store"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -540,7 +550,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/review"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -606,7 +616,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/review"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -703,7 +713,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/sandbox"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -797,7 +807,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/sandbox"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -885,7 +895,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/review"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -969,7 +979,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/llm"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -1047,7 +1057,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/llm"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -1117,7 +1127,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/review"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -1178,7 +1188,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/review"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
@@ -1247,7 +1257,7 @@ describe("InstallApp", () => {
 
       let renderer: TestRenderer.ReactTestRenderer | null = null;
       await act(async () => {
-        renderer = TestRenderer.create(
+        renderer = createInstallRenderer(
           <MemoryRouter initialEntries={["/install/llm"]}>
             <Routes>
               <Route path="/install/*" element={<InstallApp />} />
