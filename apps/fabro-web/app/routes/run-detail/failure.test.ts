@@ -1,0 +1,139 @@
+import { describe, expect, test } from "bun:test";
+import type { RunProjection } from "@qltysh/fabro-api-client";
+
+import { buildRunFailureView } from "./failure";
+
+type State = Pick<RunProjection, "status" | "conclusion" | "stages">;
+
+const NAMES = new Map([
+  ["anthropic", "Anthropic"],
+  ["openai", "OpenAI"],
+]);
+
+const CREDIT =
+  "model request failed (invalid_request): provider anthropic Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits. [provider anthropic, status 400, code invalid_request_error]";
+
+function stages(...entries: Array<[string, string, string]>): State["stages"] {
+  return Object.fromEntries(
+    entries.map(([key, state, started_at]) => [key, { state, started_at } as State["stages"][string]]),
+  );
+}
+
+function failedRun(
+  detail: Record<string, unknown>,
+  { reason = "workflow_error", kind = "failed", runStages = {} as State["stages"] } = {},
+): State {
+  return {
+    status: (kind === "failed" ? { kind, reason } : { kind }) as State["status"],
+    conclusion: {
+      failure: { reason, detail: { category: "deterministic", ...detail } },
+    } as State["conclusion"],
+    stages: runStages,
+  };
+}
+
+const view = (state: State) => buildRunFailureView(state, NAMES);
+
+describe("buildRunFailureView", () => {
+  test("names the step the run stopped at and the provider's real message", () => {
+    const failure = view(
+      failedRun({ message: CREDIT }, {
+        runStages: stages(["pick@1", "succeeded", "2026-10-10T18:05:42.783Z"], ["spec@1", "failed", "2026-10-10T18:41:53.513Z"]),
+      }),
+    );
+    expect(failure).toMatchObject({
+      stage: "spec",
+      headline: "Anthropic declined the request for billing reasons",
+      provider: "anthropic",
+      message: CREDIT,
+    });
+    expect(failure?.nextStep).toBe("Add credit or raise the spend limit with Anthropic, then choose Retry from Actions.");
+  });
+
+  test("names an unknown provider by its id", () => {
+    const failure = view(
+      failedRun({ message: "model request failed (authentication): provider acme bad key [provider acme, status 401, code unauthorized]" }),
+    );
+    expect(failure?.headline).toBe("acme rejected the API key");
+  });
+
+  test("reads auth, rate limits, timeouts and outages from the request's own status and kind", () => {
+    const headline = (message: string) => view(failedRun({ message }))?.headline;
+    expect(headline("model request failed (authentication): provider anthropic invalid x-api-key [provider anthropic, status 401, code authentication_error]"))
+      .toBe("Anthropic rejected the API key");
+    expect(headline("model request failed (rate_limit): provider openai Too many requests [provider openai, status 429, code rate_limit_exceeded]"))
+      .toBe("OpenAI rate-limited the request");
+    expect(headline("model request failed (server): provider anthropic Overloaded [provider anthropic, status 529, code overloaded_error]"))
+      .toBe("Anthropic was unavailable");
+    expect(headline("model request failed (timeout): provider openai request timed out"))
+      .toBe("The request to OpenAI timed out");
+  });
+
+  test("falls back to the provider's status and code", () => {
+    const failure = view(
+      failedRun({
+        message: "model request failed (invalid_request): provider openai Unsupported parameter: 'temperature' is not supported with this model. [provider openai, status 400, code unsupported_parameter]",
+      }),
+    );
+    expect(failure?.headline).toBe("OpenAI returned 400 unsupported parameter");
+  });
+
+  test("never reads a provider, status or billing problem out of a command's own words", () => {
+    const failure = view(
+      failedRun({
+        message: "script exited with status 401",
+        exec_output_tail: { stdout: "test billing::invoice ... FAILED\nretry the provider list later\n", stderr: null },
+      }),
+    );
+    expect(failure).toMatchObject({
+      headline: "The step's command exited with status 401",
+      provider: null,
+      nextStep: "Its output, under Details, usually says why.",
+    });
+    expect(view(failedRun({ message: "Ran 512 tests; line 503 failed." }))?.headline).toBe("Ran 512 tests; line 503 failed.");
+  });
+
+  test("names no step when the run recovered from an earlier failed one", () => {
+    const failure = view(
+      failedRun({ message: "push rejected: remote branch moved" }, {
+        reason: "publish_failed",
+        runStages: stages(
+          ["toolchain@1", "failed", "2026-10-10T15:20:45Z"],
+          ["fixup@1", "succeeded", "2026-10-10T15:21:00Z"],
+          ["verify@1", "succeeded", "2026-10-10T15:25:00.500Z"],
+        ),
+      }),
+    );
+    expect(failure?.stage).toBeNull();
+    expect(failure?.headline).toBe("The steps finished, but publishing the result failed");
+  });
+
+  test("shows nothing for a cancelled run, and says what happened for other endings", () => {
+    expect(view(failedRun({ message: "Run cancelled before worker launch completed" }, { reason: "cancelled" }))).toBeNull();
+    expect(view(failedRun({ message: "denied at review" }, { reason: "approval_denied" }))?.headline).toBe("Approval was denied");
+    expect(view(failedRun({ message: "budget of $5 reached" }, { reason: "budget_exhausted" }))?.headline).toBe("The run used up its budget");
+    expect(view(failedRun({ message: "sandbox image not found" }, { reason: "sandbox_init_failed" }))?.headline).toBe("The run couldn't start");
+    expect(view(failedRun({ message: "worker exited unexpectedly" }, { kind: "dead" }))?.headline).toBe("Worker exited unexpectedly");
+  });
+
+  test("shows the end of a command's output, from whichever stream has it", () => {
+    const tail = (exec_output_tail: Record<string, unknown>) =>
+      view(failedRun({ message: "script exited with status 1", exec_output_tail }))?.output;
+    expect(tail({ stderr: "\n  \n", stdout: "real error\n" })).toBe("real error");
+    expect(tail({ stderr: "line one\r\nline two\r\n", stdout: null })).toBe("line one\nline two");
+    expect(tail({ stdout: "10%\r50%\r100% done\n" })).toBe("100% done");
+    const many = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
+    expect(tail({ stdout: many })?.split("\n")).toEqual(Array.from({ length: 12 }, (_, i) => `line ${i + 19}`));
+  });
+
+  test("cuts a long fallback headline without splitting a character", () => {
+    const headline = view(failedRun({ message: `${"🔥".repeat(200)} and more` }))!.headline;
+    expect(Array.from(headline)).toHaveLength(111);
+    expect(headline.endsWith("🔥…")).toBe(true);
+  });
+
+  test("shows nothing for runs that didn't fail", () => {
+    expect(buildRunFailureView({ status: { kind: "succeeded" }, stages: {} } as State)).toBeNull();
+    expect(buildRunFailureView(null)).toBeNull();
+  });
+});

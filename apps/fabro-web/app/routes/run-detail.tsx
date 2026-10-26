@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -34,7 +35,7 @@ import {
 } from "../lib/mutations";
 import { useRunEvents } from "../lib/run-events";
 import { useRunToasts } from "../hooks/use-run-toasts";
-import { useRun, useRunQuestions, useRunState } from "../lib/queries";
+import { useProviders, useRun, useRunQuestions, useRunState } from "../lib/queries";
 import {
   canApprove,
   deleteErrorMessage,
@@ -50,6 +51,8 @@ import {
   RunDetailAskFabroShell,
   RunDetailDockedControls,
 } from "./run-detail/docked-controls";
+import { buildRunFailureView } from "./run-detail/failure";
+import { RunFailureBanner } from "./run-detail/failure-banner";
 import { RunDetailHeader } from "./run-detail/header";
 import {
   createLifecycleToastState,
@@ -148,6 +151,12 @@ export default function RunDetail({ params }: { params: { id: string } }) {
 
   useRunEvents(params.id);
   useRunToasts(params.id);
+  const providersQuery = useProviders();
+  const providerNames = useMemo(
+    () => new Map((providersQuery.data?.data ?? []).map((p) => [p.id, p.display_name || p.id])),
+    [providersQuery.data],
+  );
+  const failure = buildRunFailureView(runStateQuery.data, providerNames);
 
   const handleLifecycleMutationResult = useCallback(
     (
@@ -381,6 +390,8 @@ export default function RunDetail({ params }: { params: { id: string } }) {
               askTrigger,
             }}
           />
+
+          {failure ? <RunFailureBanner failure={failure} /> : null}
 
           {retryDialogOpen && (
             <RetryRunDialog
