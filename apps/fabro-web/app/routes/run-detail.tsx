@@ -36,6 +36,7 @@ import {
 import { useRunEvents } from "../lib/run-events";
 import { useRunToasts } from "../hooks/use-run-toasts";
 import { useProviders, useRun, useRunQuestions, useRunState } from "../lib/queries";
+import { providerNamesById } from "../lib/model-offerings";
 import {
   canApprove,
   deleteErrorMessage,
@@ -151,9 +152,10 @@ export default function RunDetail({ params }: { params: { id: string } }) {
 
   useRunEvents(params.id);
   useRunToasts(params.id);
-  const providersQuery = useProviders();
+  // Provider names only matter to a failed run's banner.
+  const providersQuery = useProviders({ enabled: statusKind === "failed" || statusKind === "dead" });
   const providerNames = useMemo(
-    () => new Map((providersQuery.data?.data ?? []).map((p) => [p.id, p.display_name || p.id])),
+    () => providerNamesById(providersQuery.data?.data ?? []),
     [providersQuery.data],
   );
   const failure = buildRunFailureView(runStateQuery.data, {
