@@ -154,6 +154,10 @@ describe("buildRunFailureView", () => {
     expect(view(failedRun({ message: "denied at review" }, { reason: "approval_denied" }))?.headline).toBe("Approval was denied");
     expect(view(failedRun({ message: "budget of $5 reached" }, { reason: "budget_exhausted" }))?.headline).toBe("The run used up its budget");
     expect(view(failedRun({ message: "sandbox image not found" }, { reason: "sandbox_init_failed" }))?.headline).toBe("The run couldn't start");
+    expect(view(failedRun({ message: "sandbox connection reset" }, { reason: "transient_infra" }))).toMatchObject({
+      headline: "The step hit a temporary infrastructure error",
+      nextStep: "Choose Retry from Actions in a few minutes.",
+    });
   });
 
   test("says why a dead run stopped, though a dead run records no conclusion", () => {

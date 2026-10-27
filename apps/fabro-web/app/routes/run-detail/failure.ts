@@ -61,7 +61,9 @@ export function buildRunFailureView(
   const name = (id: string) => providerNames.get(id) ?? id;
   const advice =
     reasonAdvice(failure.reason, category) ??
-    (request ? requestAdvice(request, message, name(request.provider)) : stepAdvice(message, category, output));
+    (request
+      ? requestAdvice(request, message, name(request.provider))
+      : stepAdvice(message, failure.reason, category, output));
   return {
     stage: stage?.replace(/@1$/, "") ?? null,
     ...advice,
@@ -192,7 +194,14 @@ function requestAdvice({ kind, status, code }: ModelRequest, message: string, wh
   };
 }
 
-function stepAdvice(message: string, category: FailureCategory, output: string | null): Advice {
+// A transient model request failure keeps requestAdvice's wording, which
+// names the provider, so transient infrastructure is checked here.
+function stepAdvice(
+  message: string,
+  reason: FailureReason,
+  category: FailureCategory,
+  output: string | null,
+): Advice {
   const exit = /exited with (?:status|code) (\d+)/i.exec(message);
   if (exit) {
     return {
@@ -200,7 +209,7 @@ function stepAdvice(message: string, category: FailureCategory, output: string |
       nextStep: output ? "Its output, under Details, usually says why." : "Open the step's logs for its output.",
     };
   }
-  if (category === FailureCategory.TRANSIENT_INFRA) {
+  if (reason === FailureReason.TRANSIENT_INFRA || category === FailureCategory.TRANSIENT_INFRA) {
     return { headline: "The step hit a temporary infrastructure error", nextStep: "Choose Retry from Actions in a few minutes." };
   }
   return { headline: firstSentence(message), nextStep: "Open the failed step's logs for details." };
