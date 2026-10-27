@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use chrono::Utc;
 use fabro_store::platform_records::{PlatformRecord, RunLifecycleKind, RunLifecycleRecord};
 use tokio::time::{Instant, sleep_until};
@@ -129,7 +130,8 @@ enum ChildStartDecision {
     AutoApproved,
 }
 
-/// Decide whether a non-resume start of `run_state` needs operator approval.
+/// Decide whether a start of `run_state` needs operator approval. A resume
+/// is never gated.
 ///
 /// A worker-started child is auto-approved only when the server enables the
 /// capability and the spawning parent's persisted workflow settings opt in.
@@ -140,8 +142,12 @@ enum ChildStartDecision {
 async fn child_start_decision(
     state: &AppState,
     run_state: &fabro_store::RunProjection,
+    resume: bool,
     actor: &Principal,
 ) -> Result<ChildStartDecision, ApiError> {
+    if resume {
+        return Ok(ChildStartDecision::NotGated);
+    }
     let Principal::Worker { run_id } = actor else {
         return Ok(ChildStartDecision::NotGated);
     };
@@ -154,15 +160,25 @@ async fn child_start_decision(
         // could approve it, so operator approval is required.
         return Ok(ChildStartDecision::ApprovalRequired);
     }
-    if !state.server_settings().server.approvals.allow_child_auto_approval {
+    if !state
+        .server_settings()
+        .server
+        .approvals
+        .allow_child_auto_approval
+    {
         return Ok(ChildStartDecision::ApprovalRequired);
     }
     // The spawning parent owns the policy: read it from the parent's own
     // persisted settings, not from the child's parent link, so reassigning
     // the link cannot change the decision. A parent whose projection is gone
-    // fails closed to the approval gate.
-    let parent = run_records::projection(state, *run_id)
+    // fails closed to the approval gate. The parent's settings are fixed at
+    // create, so there is no need to wait for its projector to settle.
+    let parent = state
+        .stores
+        .run_summaries
+        .load_petri_projection(run_id)
         .await
+        .with_context(|| format!("loading the projection of parent run {run_id}"))
         .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let opted_in = parent.is_some_and(|parent| parent.spec.settings.run.children.auto_approve);
     Ok(if opted_in {
@@ -189,40 +205,30 @@ pub(super) async fn queue_run(
         .root()
         .to_path_buf();
     let dot_source = run_state.spec.graph_source.clone().unwrap_or_default();
-    let decision = if resume {
-        ChildStartDecision::NotGated
-    } else {
-        child_start_decision(state, run_state, &actor).await?
-    };
-    let approval_required = matches!(decision, ChildStartDecision::ApprovalRequired);
     let mut start_requested = RunLifecycleRecord::new(RunLifecycleKind::StartRequested);
     start_requested.source = Some(if resume { "resume" } else { "start" }.to_string());
-    let next_status = if approval_required {
-        RunStatus::Pending {
-            reason: PendingReason::ApprovalRequired,
+    let (next_status, next) = match child_start_decision(state, run_state, resume, &actor).await? {
+        ChildStartDecision::NotGated => (RunStatus::Runnable, vec![run_records::runnable(
+            RunRunnableSource::StartRequested,
+        )]),
+        ChildStartDecision::ApprovalRequired => {
+            let status = RunStatus::Pending {
+                reason: PendingReason::ApprovalRequired,
+            };
+            (status, vec![run_records::transition(
+                RunLifecycleKind::Pending,
+                status,
+            )])
         }
-    } else {
-        RunStatus::Runnable
-    };
-    let records = match decision {
-        ChildStartDecision::NotGated => vec![
-            start_requested,
-            run_records::runnable(RunRunnableSource::StartRequested),
-        ],
-        ChildStartDecision::ApprovalRequired => vec![
-            start_requested,
-            run_records::transition(RunLifecycleKind::Pending, next_status),
-        ],
         // Policy approval is recorded as its own auditable transition before
         // the runnable state, so the projection never shows a transitive
         // pending state for an auto-approved child.
-        ChildStartDecision::AutoApproved => vec![
-            start_requested,
+        ChildStartDecision::AutoApproved => (RunStatus::Runnable, vec![
             RunLifecycleRecord::new(RunLifecycleKind::AutoApproved),
             run_records::runnable(RunRunnableSource::AutoApproved),
-        ],
+        ]),
     };
-    for record in records {
+    for record in std::iter::once(start_requested).chain(next) {
         if let Err(err) = run_records::lifecycle(state, id, record).await {
             return Err(ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -249,7 +255,7 @@ pub(super) async fn queue_run(
         );
     }
 
-    if !approval_required {
+    if next_status == RunStatus::Runnable {
         state.scheduler_notify.notify_one();
     }
     Ok(())

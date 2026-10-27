@@ -55,7 +55,7 @@ pub fn resolve_server(layer: &ServerLayer, errors: &mut Vec<ResolveError>) -> Se
                 .approvals
                 .as_ref()
                 .and_then(|approvals| approvals.allow_child_auto_approval)
-                .unwrap_or(false),
+                .expect("defaults.toml should provide server.approvals.allow_child_auto_approval"),
         },
         logging: ServerLoggingSettings {
             level:       layer

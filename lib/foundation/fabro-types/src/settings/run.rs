@@ -604,10 +604,10 @@ pub struct RunIntegrationsSettings {
 ///
 /// This governs the child's *lifecycle* start decision (whether the child
 /// waits for operator approval), not the child's own agent-interaction
-/// approval posture (`run.execution.approval`, which `RunIntentArgs
-/// .auto_approve` maps to). It is the workflow half of the child
-/// auto-approval opt-in; the server half is `server.approvals
-/// .allow_child_auto_approval`, and both must be enabled.
+/// approval posture (`run.execution.approval`, which
+/// `RunIntentArgs.auto_approve` maps to). It is the workflow half of the
+/// child auto-approval opt-in; the server half is
+/// `server.approvals.allow_child_auto_approval`, and both must be enabled.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RunChildrenSettings {

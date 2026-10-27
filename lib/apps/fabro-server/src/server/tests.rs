@@ -627,15 +627,21 @@ fn jwt_auth_mode() -> AuthMode {
 }
 
 fn jwt_auth_state() -> Arc<AppState> {
-    test_app_state_with_session_key(
-        default_test_server_settings(),
-        RunLayer::default(),
-        Some(TEST_SESSION_SECRET),
-    )
+    jwt_auth_state_with(default_test_server_settings(), RunLayer::default())
+}
+
+fn jwt_auth_state_with(
+    server_settings: fabro_types::ServerSettings,
+    run_defaults: RunLayer,
+) -> Arc<AppState> {
+    test_app_state_with_session_key(server_settings, run_defaults, Some(TEST_SESSION_SECRET))
 }
 
 fn jwt_auth_app() -> (Arc<AppState>, Router) {
-    let state = jwt_auth_state();
+    jwt_auth_app_with_state(jwt_auth_state())
+}
+
+fn jwt_auth_app_with_state(state: Arc<AppState>) -> (Arc<AppState>, Router) {
     let app = build_router(Arc::clone(&state), jwt_auth_mode());
     (state, app)
 }
@@ -681,25 +687,7 @@ fn issue_test_run_tools_worker_token(run_id: &RunId) -> String {
 }
 
 async fn create_run_with_bearer(app: &Router, bearer: &str) -> RunId {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(api("/runs"))
-                .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    test_intent_with_bearer(app, "workflow.fabro", MINIMAL_DOT, None, Some(bearer))
-                        .await
-                        .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let body = response_json!(response, StatusCode::CREATED).await;
-    body["id"].as_str().unwrap().parse().unwrap()
+    create_run_with_workflow_config(app, bearer, None).await
 }
 
 fn bearer_request(method: Method, path: &str, bearer: &str, body: Body) -> Request<Body> {
@@ -8005,13 +7993,10 @@ methods = ["dev-token"]
 allow_child_auto_approval = {allow_child_auto_approval}
 "#
     );
-    let state = test_app_state_with_session_key(
+    jwt_auth_app_with_state(jwt_auth_state_with(
         server_settings_from_toml(&source),
         manifest_run_defaults_from_toml(&source),
-        Some(TEST_SESSION_SECRET),
-    );
-    let app = build_router(Arc::clone(&state), jwt_auth_mode());
-    (state, app)
+    ))
 }
 
 async fn create_run_with_workflow_config(
@@ -8041,6 +8026,7 @@ async fn create_child_as_worker(
     worker_token: &str,
     parent_run_id: RunId,
     registrar_bearer: &str,
+    args: Option<serde_json::Value>,
 ) -> RunId {
     let mut child_intent = test_intent_with_bearer(
         app,
@@ -8051,6 +8037,9 @@ async fn create_child_as_worker(
     )
     .await;
     child_intent["parent_id"] = json!(parent_run_id.to_string());
+    if let Some(args) = args {
+        child_intent["args"] = args;
+    }
     let response = app
         .clone()
         .oneshot(json_bearer_request(
@@ -8077,20 +8066,19 @@ async fn start_run_as_worker(app: &Router, worker_token: &str, run_id: RunId) ->
         .unwrap()
 }
 
-async fn child_lifecycle_transitions(state: &AppState, run_id: RunId) -> Vec<String> {
-    state
-        .stores
-        .run_summaries
-        .platform_records()
-        .read(&run_id)
-        .await
-        .unwrap()
-        .iter()
-        .filter_map(|stored| match &stored.record {
-            PlatformRecord::RunLifecycle(record) => Some(record.transition.to_string()),
-            _ => None,
+fn assert_pending_approval(body: &serde_json::Value) {
+    assert_eq!(
+        run_json_status(body),
+        &json!({
+            "kind": "pending",
+            "reason": "approval_required"
         })
-        .collect()
+    );
+}
+
+fn assert_managed_status(state: &AppState, run_id: RunId, status: RunStatus) {
+    let runs = state.runs.lock().expect("runs lock poisoned");
+    assert_eq!(runs.get(&run_id).map(|run| run.status), Some(status));
 }
 
 #[tokio::test]
@@ -8101,32 +8089,22 @@ async fn child_start_stays_pending_when_only_the_workflow_opts_in() {
         create_run_with_workflow_config(&app, &user_jwt, Some(CHILD_AUTO_APPROVE_TOML)).await;
     let worker_token = issue_test_run_tools_worker_token(&parent_run_id);
     let child_run_id =
-        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt).await;
+        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt, None).await;
 
     let pending_body = response_json!(
         start_run_as_worker(&app, &worker_token, child_run_id).await,
         StatusCode::OK
     )
     .await;
-    assert_eq!(
-        run_json_status(&pending_body),
-        &json!({
-            "kind": "pending",
-            "reason": "approval_required"
-        })
-    );
+    assert_pending_approval(&pending_body);
     assert_eq!(
         pending_body["lifecycle"]["approval"]["state"].as_str(),
         Some("pending")
     );
 
-    let runs = state.runs.lock().expect("runs lock poisoned");
-    assert_eq!(
-        runs.get(&child_run_id).map(|run| run.status),
-        Some(RunStatus::Pending {
-            reason: fabro_types::PendingReason::ApprovalRequired,
-        })
-    );
+    assert_managed_status(&state, child_run_id, RunStatus::Pending {
+        reason: fabro_types::PendingReason::ApprovalRequired,
+    });
 }
 
 #[tokio::test]
@@ -8136,28 +8114,18 @@ async fn child_start_stays_pending_when_only_the_server_opts_in() {
     let parent_run_id = create_run_with_workflow_config(&app, &user_jwt, None).await;
     let worker_token = issue_test_run_tools_worker_token(&parent_run_id);
     let child_run_id =
-        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt).await;
+        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt, None).await;
 
     let pending_body = response_json!(
         start_run_as_worker(&app, &worker_token, child_run_id).await,
         StatusCode::OK
     )
     .await;
-    assert_eq!(
-        run_json_status(&pending_body),
-        &json!({
-            "kind": "pending",
-            "reason": "approval_required"
-        })
-    );
+    assert_pending_approval(&pending_body);
 
-    let runs = state.runs.lock().expect("runs lock poisoned");
-    assert_eq!(
-        runs.get(&child_run_id).map(|run| run.status),
-        Some(RunStatus::Pending {
-            reason: fabro_types::PendingReason::ApprovalRequired,
-        })
-    );
+    assert_managed_status(&state, child_run_id, RunStatus::Pending {
+        reason: fabro_types::PendingReason::ApprovalRequired,
+    });
 }
 
 #[tokio::test]
@@ -8168,7 +8136,7 @@ async fn child_start_is_auto_approved_when_both_opt_ins_are_enabled() {
         create_run_with_workflow_config(&app, &user_jwt, Some(CHILD_AUTO_APPROVE_TOML)).await;
     let worker_token = issue_test_run_tools_worker_token(&parent_run_id);
     let child_run_id =
-        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt).await;
+        create_child_as_worker(&app, &worker_token, parent_run_id, &user_jwt, None).await;
 
     let approved_body = response_json!(
         start_run_as_worker(&app, &worker_token, child_run_id).await,
@@ -8191,15 +8159,17 @@ async fn child_start_is_auto_approved_when_both_opt_ins_are_enabled() {
 
     // The lifecycle history records one deliberate policy approval; the
     // projection never shows a transient pending state.
-    let transitions = child_lifecycle_transitions(state.as_ref(), child_run_id).await;
-    assert!(transitions.contains(&"auto_approved".to_string()));
-    assert!(!transitions.contains(&"pending".to_string()));
-
-    let runs = state.runs.lock().expect("runs lock poisoned");
+    let records = platform_records(&state, child_run_id).await;
     assert_eq!(
-        runs.get(&child_run_id).map(|run| run.status),
-        Some(RunStatus::Runnable)
+        lifecycle_transition_count(&records, RunLifecycleKind::AutoApproved),
+        1
     );
+    assert_eq!(
+        lifecycle_transition_count(&records, RunLifecycleKind::Pending),
+        0
+    );
+
+    assert_managed_status(&state, child_run_id, RunStatus::Runnable);
 }
 
 #[tokio::test]
@@ -8208,42 +8178,21 @@ async fn child_start_ignores_client_auto_approve_args_without_policy() {
     let user_jwt = issue_test_user_jwt();
     let parent_run_id = create_run_with_bearer(&app, &user_jwt).await;
     let worker_token = issue_test_run_tools_worker_token(&parent_run_id);
-
-    let mut child_intent = test_intent_with_bearer(
+    let child_run_id = create_child_as_worker(
         &app,
-        "workflow.fabro",
-        MINIMAL_DOT,
-        None,
-        Some(&user_jwt),
+        &worker_token,
+        parent_run_id,
+        &user_jwt,
+        Some(json!({ "auto_approve": true })),
     )
     .await;
-    child_intent["parent_id"] = json!(parent_run_id.to_string());
-    child_intent["args"] = json!({ "auto_approve": true });
-    let response = app
-        .clone()
-        .oneshot(json_bearer_request(
-            Method::POST,
-            "/runs",
-            &worker_token,
-            &child_intent,
-        ))
-        .await
-        .unwrap();
-    let child_body = response_json!(response, StatusCode::CREATED).await;
-    let child_run_id = child_body["id"].as_str().unwrap().parse::<RunId>().unwrap();
 
     let pending_body = response_json!(
         start_run_as_worker(&app, &worker_token, child_run_id).await,
         StatusCode::OK
     )
     .await;
-    assert_eq!(
-        run_json_status(&pending_body),
-        &json!({
-            "kind": "pending",
-            "reason": "approval_required"
-        })
-    );
+    assert_pending_approval(&pending_body);
 }
 
 #[tokio::test]
@@ -8263,13 +8212,7 @@ async fn worker_start_of_runs_it_did_not_spawn_fails_closed_to_approval() {
         StatusCode::OK
     )
     .await;
-    assert_eq!(
-        run_json_status(&pending_body),
-        &json!({
-            "kind": "pending",
-            "reason": "approval_required"
-        })
-    );
+    assert_pending_approval(&pending_body);
 
     // Starting a run the worker did not spawn fails closed to the approval
     // gate instead of skipping it.
@@ -8278,23 +8221,11 @@ async fn worker_start_of_runs_it_did_not_spawn_fails_closed_to_approval() {
         StatusCode::OK
     )
     .await;
-    assert_eq!(
-        run_json_status(&pending_body),
-        &json!({
-            "kind": "pending",
-            "reason": "approval_required"
-        })
-    );
-    let projection = state
-        .load_run_projection(&unrelated_run_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        projection.status,
-        RunStatus::Pending {
-            reason: fabro_types::PendingReason::ApprovalRequired,
-        }
-    );
+    assert_pending_approval(&pending_body);
+    let projection = state.load_run_projection(&unrelated_run_id).await.unwrap();
+    assert_eq!(projection.status, RunStatus::Pending {
+        reason: fabro_types::PendingReason::ApprovalRequired,
+    });
 }
 
 #[tokio::test]

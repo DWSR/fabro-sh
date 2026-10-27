@@ -225,20 +225,14 @@ fn fold_lifecycle(projection: &mut RunProjection, record: &RunLifecycleRecord, a
             // A child start approved by policy: no request preceded the
             // decision, so the approval is created approved in one step
             // rather than projected through a transient pending state.
-            match projection.approval.as_mut() {
-                Some(approval) => {
-                    approval.state = RunApprovalState::Approved;
-                    approval.decided_at = Some(at);
-                }
-                None => {
-                    projection.approval = Some(RunApproval {
-                        state:         RunApprovalState::Approved,
-                        requested_at:  at,
-                        decided_at:    Some(at),
-                        denial_reason: None,
-                    });
-                }
-            }
+            let approval = projection.approval.get_or_insert(RunApproval {
+                state:         RunApprovalState::Approved,
+                requested_at:  at,
+                decided_at:    None,
+                denial_reason: None,
+            });
+            approval.state = RunApprovalState::Approved;
+            approval.decided_at = Some(at);
         }
         Kind::Denied => {
             if let Some(approval) = projection.approval.as_mut() {

@@ -2013,12 +2013,12 @@ fn run_children_auto_approve_defaults_to_false() {
 #[test]
 fn run_children_auto_approve_resolves_from_workflow_toml() {
     let settings = super::workflow_settings_from_toml(
-        r#"
+        r"
 _version = 1
 
 [run.children]
 auto_approve = true
-"#,
+",
     )
     .expect("[run.children] should resolve")
     .run;
