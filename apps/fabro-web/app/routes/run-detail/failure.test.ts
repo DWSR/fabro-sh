@@ -70,6 +70,10 @@ describe("buildRunFailureView", () => {
     const headline = (message: string) => view(failedRun({ message }))?.headline;
     expect(headline("model request failed (authentication): provider anthropic invalid x-api-key [provider anthropic, status 401, code authentication_error]"))
       .toBe("Anthropic rejected the API key");
+    expect(headline("model request failed (access_denied): provider openai The model is not available to your organization [provider openai, status 403, code model_not_found]"))
+      .toBe("OpenAI denied access to the request");
+    expect(headline("model request failed (authentication): provider acme forbidden [provider acme, status 403, code forbidden]"))
+      .toBe("acme rejected the API key");
     expect(headline("model request failed (rate_limit): provider openai Too many requests [provider openai, status 429, code rate_limit_exceeded]"))
       .toBe("OpenAI rate-limited the request");
     expect(headline("model request failed (server): provider anthropic Overloaded [provider anthropic, status 529, code overloaded_error]"))

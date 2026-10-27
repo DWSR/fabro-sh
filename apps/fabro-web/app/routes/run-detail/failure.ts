@@ -151,8 +151,14 @@ function requestAdvice({ kind, status, code }: ModelRequest, message: string, wh
       nextStep: `Add credit or raise the spend limit with ${who}, then ${RETRY}.`,
     };
   }
-  if (kind === "authentication" || status === 401 || status === 403) {
+  if (kind === "authentication" || status === 401) {
     return { headline: `${who} rejected the API key`, nextStep: `Check the key under Settings → Secrets, then ${RETRY}.` };
+  }
+  if (kind === "access_denied" || status === 403) {
+    return {
+      headline: `${who} denied access to the request`,
+      nextStep: `The key works, but ${who} doesn't allow this account to make the call. ${who}'s message, under Details, says why.`,
+    };
   }
   if (kind === "rate_limit" || status === 429) {
     return { headline: `${who} rate-limited the request`, nextStep: "This is usually temporary. Choose Retry from Actions in a few minutes." };
