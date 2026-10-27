@@ -135,6 +135,11 @@ describe("buildRunFailureView", () => {
     expect(failure?.headline).toBe("The steps finished, but publishing the result failed");
   });
 
+  test("labels a looped step with its visit, as the Stages sidebar does", () => {
+    const runStages = stages(["review@1", "succeeded", "2026-10-10T15:20:00Z"], ["review@3", "failed", "2026-10-10T15:30:00Z"]);
+    expect(view(failedRun({ message: "script exited with status 1" }, { runStages }))?.stage).toBe("review@3");
+  });
+
   test("names the failed branch of a fan-out, though a sibling started after it", () => {
     const runStages = stages(
       ["checks@1", "failed", "2026-10-10T15:20:00.000Z"],
