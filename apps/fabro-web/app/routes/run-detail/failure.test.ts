@@ -82,6 +82,20 @@ describe("buildRunFailureView", () => {
       .toBe("The request to OpenAI timed out");
   });
 
+  test("doesn't blame the provider for failures on Fabro's side", () => {
+    const failure = (message: string) => view(failedRun({ message }));
+    expect(failure("model request failed (configuration): provider anthropic is disabled in the catalog")).toMatchObject({
+      headline: "Fabro couldn't send the request to Anthropic",
+      nextStep: "Check Anthropic and the step's model under Settings → Models, then choose Retry from Actions.",
+    });
+    expect(failure("model request failed (model_selection): provider anthropic has no default model")?.headline)
+      .toBe("Fabro couldn't send the request to Anthropic");
+    expect(failure("model request failed (network): provider openai connection refused")?.headline)
+      .toBe("The request never reached OpenAI");
+    expect(failure("model request failed (resource_limit): provider openai response exceeded 16 MiB")?.headline)
+      .toBe("Fabro stopped the request to OpenAI");
+  });
+
   test("falls back to the provider's status and code", () => {
     const failure = view(
       failedRun({

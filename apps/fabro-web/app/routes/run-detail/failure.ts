@@ -141,6 +141,22 @@ function parseModelRequest(message: string): ModelRequest | null {
 }
 
 function requestAdvice({ kind, status, code }: ModelRequest, message: string, who: string): Advice {
+  // These kinds fail on Fabro's side, before or without the provider's say.
+  if (kind === "configuration" || kind === "model_selection") {
+    return {
+      headline: `Fabro couldn't send the request to ${who}`,
+      nextStep: `Check ${who} and the step's model under Settings → Models, then ${RETRY}.`,
+    };
+  }
+  if (kind === "network") {
+    return {
+      headline: `The request never reached ${who}`,
+      nextStep: "Check that the Fabro server can reach the provider, then choose Retry from Actions.",
+    };
+  }
+  if (kind === "middleware" || kind === "resource_limit") {
+    return { headline: `Fabro stopped the request to ${who}`, nextStep: "The message, under Details, says why." };
+  }
   if (
     kind === "quota_exceeded" ||
     status === 402 ||
