@@ -534,9 +534,10 @@ export function useServerSettings() {
   );
 }
 
-export function useProviders() {
+/** The provider catalog; `enabled: false` skips the request. */
+export function useProviders({ enabled = true }: { enabled?: boolean } = {}) {
   return useSWR<ProviderList>(
-    queryKeys.providers.list(),
+    enabled ? queryKeys.providers.list() : null,
     () => apiData(() => modelsApi.listProviders()),
     immutableOptions,
   );

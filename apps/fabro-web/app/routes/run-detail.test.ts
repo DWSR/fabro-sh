@@ -86,6 +86,7 @@ mock.module("../lib/queries", () => ({
     isValidating: false,
     mutate:       mock(() => Promise.resolve(null)),
   }),
+  useProviders: () => ({ data: null }),
 }));
 
 mock.module("../lib/run-events", () => ({
