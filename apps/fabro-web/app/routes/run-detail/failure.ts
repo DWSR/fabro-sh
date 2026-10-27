@@ -141,7 +141,11 @@ function parseModelRequest(message: string): ModelRequest | null {
 }
 
 function requestAdvice({ kind, status, code }: ModelRequest, message: string, who: string): Advice {
-  if (/credit balance|insufficient[_ ]quota|payment required|billing|spend limit/i.test(message) || status === 402) {
+  if (
+    kind === "quota_exceeded" ||
+    status === 402 ||
+    /credit balance|insufficient[_ ]quota|payment required|billing|spend limit/i.test(message)
+  ) {
     return {
       headline: `${who} declined the request for billing reasons`,
       nextStep: `Add credit or raise the spend limit with ${who}, then ${RETRY}.`,

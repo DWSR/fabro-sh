@@ -50,6 +50,15 @@ describe("buildRunFailureView", () => {
     expect(failure?.nextStep).toBe("Add credit or raise the spend limit with Anthropic, then choose Retry from Actions.");
   });
 
+  test("reads a spent quota as billing, though the provider answered 429", () => {
+    const failure = view(
+      failedRun({
+        message: "model request failed (quota_exceeded): provider gemini Quota exceeded for metric generate_content_requests [provider gemini, status 429, code RESOURCE_EXHAUSTED]",
+      }),
+    );
+    expect(failure?.headline).toBe("gemini declined the request for billing reasons");
+  });
+
   test("names an unknown provider by its id", () => {
     const failure = view(
       failedRun({ message: "model request failed (authentication): provider acme bad key [provider acme, status 401, code unauthorized]" }),
