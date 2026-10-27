@@ -21,7 +21,6 @@ import {
   petriEventName,
   petriStageLabel,
   platformRecordKind,
-  platformRecordsOf,
   reducerTranscriptFromProjection,
   stagesFromProjection,
   streamItemName,
@@ -204,27 +203,6 @@ describe("run phases", () => {
 });
 
 describe("platform records", () => {
-  test("a notice recorded between the branches lists with its message", () => {
-    const records = platformRecordsOf(parallel.stream);
-    const notices = records.filter((record) => record.kind === "run.notice");
-    expect(notices).toHaveLength(1);
-    expect(notices[0].detail).toBe("recorded while both branches ran");
-    expect(notices[0].stageKey).toBeNull();
-  });
-
-  test("each stage's checkpoint lists with its commit and its stage", () => {
-    const records = platformRecordsOf(parallel.stream);
-    const checkpoints = records.filter((record) => record.kind === "checkpoint");
-    // start, fork, a, b, merge, exit, and the two branch delegates.
-    expect(checkpoints.length).toBeGreaterThanOrEqual(6);
-    for (const checkpoint of checkpoints) {
-      expect(checkpoint.detail).toMatch(/^[0-9a-f]{12}$/);
-      expect(checkpoint.stageKey).not.toBeNull();
-    }
-    const order = records.map((record) => record.kind);
-    expect(order.indexOf("checkpoint")).toBeLessThan(order.indexOf("run.notice"));
-  });
-
   test("the debug rows name every item and carry its stage", () => {
     const rows = debugRowsFromStream(parallel.stream);
     expect(rows).toHaveLength(parallel.stream.length);

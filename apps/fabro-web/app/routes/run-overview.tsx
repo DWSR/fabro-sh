@@ -4,7 +4,6 @@ import { stagePath } from "../lib/stage-routes";
 import { ApiError } from "../lib/api-client";
 import { useRun, useRunGraph, useRunGraphSource, useRunStages } from "../lib/queries";
 import { FloatingTooltip } from "../components/floating-tooltip";
-import { PlatformRecordsPanel } from "../components/platform-records-panel";
 import { RunSummaryPanel } from "../components/run-summary-panel";
 import { StagePopover } from "../components/stage-popover";
 import { StageSidebar } from "../components/stage-sidebar";
@@ -154,9 +153,8 @@ export default function RunOverview() {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 pb-[var(--fabro-interview-dock-clearance,0px)]">
-        <div className="shrink-0 space-y-4">
+        <div className="shrink-0">
           <RunSummaryPanel runId={id!} />
-          <PlatformRecordsPanel runId={id!} />
         </div>
         {graphSvg === undefined && graphQuery.isLoading ? (
           <div className="flex-1" />
