@@ -412,55 +412,6 @@ export function deriveRunPhasesFromStream(
   return phases;
 }
 
-// ── Platform records ────────────────────────────────────────────────────
-
-export interface PlatformRecordEntry {
-  streamSeq: number;
-  kind: string;
-  ts: string;
-  /** The stage the record belongs to, as `execution:firing`, if any. */
-  stageKey: string | null;
-  /** A one-line summary: the commit sha, the pull request url, the notice. */
-  detail: string | null;
-}
-
-/** The platform records on the stream that name a Fabro fact worth a row. */
-export function platformRecordsOf(stream: PetriStream): PlatformRecordEntry[] {
-  const out: PlatformRecordEntry[] = [];
-  for (const item of stream) {
-    const kind = platformRecordKind(item);
-    if (!kind) continue;
-    const rec = record(item) ?? {};
-    const position = getObject(item.item, "position");
-    const execution = getNumber(position, "execution") ?? getNumber(rec, "execution");
-    const firing = getNumber(position, "firing") ?? getNumber(rec, "firing");
-    const stageKey =
-      execution !== undefined && firing !== undefined ? `${execution}:${firing}` : null;
-    let detail: string | null = null;
-    switch (kind) {
-      case "checkpoint":
-        detail = getString(rec, "git_commit_sha")?.slice(0, 12) ?? null;
-        break;
-      case "pull_request.created":
-        detail = getString(rec, "html_url") ?? getString(rec, "url") ?? null;
-        break;
-      case "run.notice":
-        detail = getString(rec, "message") ?? getString(rec, "code") ?? null;
-        break;
-      case "run.title":
-        detail = getString(rec, "title") ?? null;
-        break;
-      case "run.branch":
-        detail = getString(rec, "run_branch") ?? null;
-        break;
-      default:
-        continue;
-    }
-    out.push({ streamSeq: item.stream_seq, kind, ts: streamItemTs(item), stageKey, detail });
-  }
-  return out;
-}
-
 // ── Debug rows ──────────────────────────────────────────────────────────
 
 /** A stream item as the events listing and the stage debug tab show it. */

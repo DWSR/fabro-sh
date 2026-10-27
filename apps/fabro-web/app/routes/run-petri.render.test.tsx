@@ -10,7 +10,6 @@ import type { RunStage } from "@qltysh/fabro-api-client";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router";
 
-import { PlatformRecordsPanelView } from "../components/platform-records-panel";
 import { RunWaterfall } from "../components/run-waterfall";
 import { StageSidebar } from "../components/stage-sidebar";
 import { FanInResults } from "../components/stage-renderers/fan-in-results";
@@ -26,7 +25,6 @@ import {
   parallelOverviewFromProjection,
   parsePetriInterviewPairs,
   petriParsed,
-  platformRecordsOf,
   reducerTranscriptFromProjection,
   stagesFromProjection,
 } from "../lib/petri-stream";
@@ -197,7 +195,7 @@ describe("a two-branch parallel run", () => {
     expect(html).not.toContain("Reducer transcript");
   });
 
-  test("the events view lists Petri events by name and the platform notice", () => {
+  test("the events view lists Petri events, platform notices and checkpoints", () => {
     const html = render(
       <StreamEventsView
         rows={debugRowsFromStream(fixture.stream)}
@@ -212,27 +210,9 @@ describe("a two-branch parallel run", () => {
       expect(html).toContain(name);
     }
     expect(html).toContain("run.notice");
+    expect(html).toContain("checkpoint");
     expect(html).toContain('"data-stage":"a@1"');
     expect(html).toContain(`${fixture.stream.length} items`);
-  });
-
-  test("the overview lists the platform records", () => {
-    const html = render(
-      <PlatformRecordsPanelView
-        records={platformRecordsOf(fixture.stream)}
-        projection={fixture.projection}
-      />,
-    );
-    expect(html).toContain("Platform records");
-    expect(html).toContain("Notice");
-    expect(html).toContain("recorded while both branches ran");
-    // The checkpoint hook wrote one record per stage, with its commit.
-    expect(html).toContain("Checkpoint");
-    const checkpoint = fixture.stream.find(
-      (item) => item.kind === "platform" && item.item.record?.kind === "checkpoint",
-    );
-    expect(checkpoint).toBeDefined();
-    expect(html).toContain(String(checkpoint!.item.record.git_commit_sha).slice(0, 12));
   });
 
   test("the sidebar groups the branches under the fork", () => {
