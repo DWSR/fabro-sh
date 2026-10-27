@@ -135,6 +135,20 @@ describe("buildRunFailureView", () => {
     expect(failure?.headline).toBe("The steps finished, but publishing the result failed");
   });
 
+  test("names the failed branch of a fan-out, though a sibling started after it", () => {
+    const runStages = stages(
+      ["checks@1", "failed", "2026-10-10T15:20:00.000Z"],
+      ["lint@1", "failed", "2026-10-10T15:20:00.010Z"],
+      ["test@1", "cancelled", "2026-10-10T15:20:00.013Z"],
+    );
+    runStages["lint@1"]!.parallel_branch_id = "checks@1:0";
+    runStages["test@1"]!.parallel_branch_id = "checks@1:1";
+    expect(view(failedRun({ message: "script exited with status 1" }, { runStages }))?.stage).toBe("lint");
+
+    runStages["report@1"] = { state: "succeeded", started_at: "2026-10-10T15:21:00Z" } as State["stages"][string];
+    expect(view(failedRun({ message: "push rejected" }, { reason: "publish_failed", runStages }))?.stage).toBeNull();
+  });
+
   test("shows nothing for a cancelled run, and says what happened for other endings", () => {
     expect(view(failedRun({ message: "Run cancelled before worker launch completed" }, { reason: "cancelled" }))).toBeNull();
     expect(view(failedRun({ message: "denied at review" }, { reason: "approval_denied" }))?.headline).toBe("Approval was denied");

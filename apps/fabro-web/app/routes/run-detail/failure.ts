@@ -207,17 +207,31 @@ function stepAdvice(message: string, category: FailureCategory, output: string |
 }
 
 /**
- * The key of the last step to start, if it failed. An earlier failure that a
- * later step recovered from isn't where the run stopped, so it isn't named.
+ * The key of the failed step the run stopped at: the latest failed step that
+ * no later step went on from. A step that started later in a sibling branch
+ * of the same fan-out ran beside it, not after it, so it doesn't count; an
+ * earlier failure that a later step recovered from isn't named.
  */
 function stoppedAt(stages: FailureState["stages"]): string | null {
-  let last: [string, number] | null = null;
-  for (const [key, stage] of Object.entries(stages)) {
-    const started = stage.started_at ? Date.parse(stage.started_at) : NaN;
-    if (!Number.isNaN(started) && (!last || started > last[1])) last = [key, started];
+  const started = Object.entries(stages).flatMap(([key, stage]) => {
+    const at = stage.started_at ? Date.parse(stage.started_at) : NaN;
+    if (Number.isNaN(at)) return [];
+    const branch = stage.parallel_branch_id ?? null;
+    const group = branch && branch.includes(":") ? branch.slice(0, branch.lastIndexOf(":")) : null;
+    return [{ key, at, branch, group, failed: stage.state === "failed" }];
+  });
+  let stop: (typeof started)[number] | null = null;
+  for (const step of started) {
+    if (!step.failed) continue;
+    const wentOn = started.some(
+      (later) =>
+        later.at > step.at &&
+        later.group !== step.key &&
+        !(step.group !== null && later.group === step.group && later.branch !== step.branch),
+    );
+    if (!wentOn && (!stop || step.at > stop.at)) stop = step;
   }
-  if (!last || stages[last[0]]?.state !== "failed") return null;
-  return last[0];
+  return stop?.key ?? null;
 }
 
 function outputTail(tail: ExecOutputTail | null | undefined): string | null {
