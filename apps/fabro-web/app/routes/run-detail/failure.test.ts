@@ -139,6 +139,22 @@ describe("buildRunFailureView", () => {
     expect(tail({ stdout: many })?.split("\n")).toEqual(Array.from({ length: 12 }, (_, i) => `line ${i + 19}`));
   });
 
+  test("falls back to the output the failed step recorded", () => {
+    const runStages = stages(["test@1", "failed", "2026-10-10T18:05:42Z"]);
+    runStages["test@1"]!.output = "running 3 tests\ntest parse ... FAILED\n";
+    const failure = view(failedRun({ message: "script exited with status 101" }, { runStages }));
+    expect(failure).toMatchObject({
+      output: "running 3 tests\ntest parse ... FAILED",
+      nextStep: "Its output, under Details, usually says why.",
+    });
+
+    runStages["test@1"]!.output = "blob://sha256/abc";
+    expect(view(failedRun({ message: "script exited with status 101" }, { runStages }))?.output).toBeNull();
+
+    runStages["test@1"]!.output = "I will now write the spec.";
+    expect(view(failedRun({ message: CREDIT }, { runStages }))?.output).toBeNull();
+  });
+
   test("cuts a long fallback headline without splitting a character", () => {
     const headline = view(failedRun({ message: `${"🔥".repeat(200)} and more` }))!.headline;
     expect(Array.from(headline)).toHaveLength(111);

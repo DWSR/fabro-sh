@@ -19,7 +19,10 @@ export interface RunFailureView {
   message: string;
   /** Provider id, when the failure is a model request the provider refused. */
   provider: string | null;
-  /** Last OUTPUT_LINES of the failed command's stderr, else its stdout. */
+  /**
+   * Last OUTPUT_LINES of the failed command's stderr, else its stdout, else
+   * the output the step the run stopped at recorded.
+   */
   output: string | null;
 }
 
@@ -48,14 +51,19 @@ export function buildRunFailureView(
   if (!failure.detail.message || failure.reason === FailureReason.CANCELLED) return null;
 
   const { message, category } = failure.detail;
-  const output = outputTail(failure.detail.exec_output_tail);
   const request = parseModelRequest(message);
+  const stage = stoppedAt(state.stages);
+  // A refused model request's message is the whole story; the step's
+  // output would be the agent's own text.
+  const output =
+    outputTail(failure.detail.exec_output_tail) ??
+    (request || !stage ? null : lastLines(state.stages[stage]?.output));
   const name = (id: string) => providerNames.get(id) ?? id;
   const advice =
     reasonAdvice(failure.reason, category) ??
     (request ? requestAdvice(request, message, name(request.provider)) : stepAdvice(message, category, output));
   return {
-    stage: stoppedAt(state.stages),
+    stage: stage?.replace(/@1$/, "") ?? null,
     ...advice,
     message,
     provider: request?.provider ?? null,
@@ -67,7 +75,7 @@ export function buildRunFailureView(
 function deadRunView(state: FailureState, lifecycleError: string | null): RunFailureView {
   const message = lifecycleError?.trim() || "The run ended without recording a reason.";
   return {
-    stage: stoppedAt(state.stages),
+    stage: stoppedAt(state.stages)?.replace(/@1$/, "") ?? null,
     headline: lifecycleError?.trim() ? firstSentence(message) : "The run's worker stopped before the run finished",
     nextStep: `Open the failed step's logs for details. To run it again, ${RETRY}.`,
     message,
@@ -173,8 +181,8 @@ function stepAdvice(message: string, category: FailureCategory, output: string |
 }
 
 /**
- * The last step to start, if it failed. An earlier failure that a later step
- * recovered from isn't where the run stopped, so it isn't named.
+ * The key of the last step to start, if it failed. An earlier failure that a
+ * later step recovered from isn't where the run stopped, so it isn't named.
  */
 function stoppedAt(stages: FailureState["stages"]): string | null {
   let last: [string, number] | null = null;
@@ -183,12 +191,16 @@ function stoppedAt(stages: FailureState["stages"]): string | null {
     if (!Number.isNaN(started) && (!last || started > last[1])) last = [key, started];
   }
   if (!last || stages[last[0]]?.state !== "failed") return null;
-  return last[0].replace(/@1$/, "");
+  return last[0];
 }
 
 function outputTail(tail: ExecOutputTail | null | undefined): string | null {
-  const stream = [tail?.stderr, tail?.stdout].find((text) => text?.trim());
-  if (!stream) return null;
+  return lastLines([tail?.stderr, tail?.stdout].find((text) => text?.trim()));
+}
+
+function lastLines(stream: string | null | undefined): string | null {
+  // An offloaded output is a `blob://` reference, not text to show.
+  if (!stream?.trim() || stream.startsWith("blob://")) return null;
   // Carriage-return progress lines keep only what was drawn last.
   const lines = stream.trimEnd().split(/\r?\n/).map((line) => line.slice(line.lastIndexOf("\r") + 1));
   return lines.slice(-OUTPUT_LINES).join("\n");
