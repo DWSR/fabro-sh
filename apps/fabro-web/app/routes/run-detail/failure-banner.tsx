@@ -39,7 +39,7 @@ export function RunFailureBanner({ failure }: { failure: RunFailureView }) {
             <dt className="mb-1 font-mono text-[0.6875rem] tracking-wide text-fg-muted uppercase">
               {failure.provider ? "Provider message" : "Message"}
             </dt>
-            <dd className="rounded-md bg-overlay px-3 py-2 font-mono text-xs/5 wrap-break-word whitespace-pre-wrap text-fg-3">
+            <dd className="max-h-48 overflow-auto rounded-md bg-overlay px-3 py-2 font-mono text-xs/5 wrap-break-word whitespace-pre-wrap text-fg-3">
               {failure.message}
             </dd>
           </div>
