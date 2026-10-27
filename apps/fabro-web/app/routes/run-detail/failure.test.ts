@@ -32,7 +32,7 @@ function failedRun(
   };
 }
 
-const view = (state: State) => buildRunFailureView(state, NAMES);
+const view = (state: State) => buildRunFailureView(state, { providerNames: NAMES });
 
 describe("buildRunFailureView", () => {
   test("names the step the run stopped at and the provider's real message", () => {
@@ -113,7 +113,20 @@ describe("buildRunFailureView", () => {
     expect(view(failedRun({ message: "denied at review" }, { reason: "approval_denied" }))?.headline).toBe("Approval was denied");
     expect(view(failedRun({ message: "budget of $5 reached" }, { reason: "budget_exhausted" }))?.headline).toBe("The run used up its budget");
     expect(view(failedRun({ message: "sandbox image not found" }, { reason: "sandbox_init_failed" }))?.headline).toBe("The run couldn't start");
-    expect(view(failedRun({ message: "worker exited unexpectedly" }, { kind: "dead" }))?.headline).toBe("Worker exited unexpectedly");
+  });
+
+  test("says why a dead run stopped, though a dead run records no conclusion", () => {
+    const dead = {
+      status: { kind: "dead" },
+      conclusion: null,
+      stages: stages(["build@1", "failed", "2026-10-10T18:05:42Z"]),
+    } as unknown as State;
+    expect(buildRunFailureView(dead, { lifecycleError: "worker exited unexpectedly" })).toMatchObject({
+      stage: "build",
+      headline: "Worker exited unexpectedly",
+      message: "worker exited unexpectedly",
+    });
+    expect(buildRunFailureView(dead)?.headline).toBe("The run's worker stopped before the run finished");
   });
 
   test("shows the end of a command's output, from whichever stream has it", () => {

@@ -25,18 +25,27 @@ export interface RunFailureView {
 
 type FailureState = Pick<RunProjection, "status" | "conclusion" | "stages">;
 
+export interface RunFailureContext {
+  /** Provider ids to display names, from the provider catalog. */
+  providerNames?: ReadonlyMap<string, string>;
+  /** The run summary's `lifecycle.error`, the only reason a dead run records. */
+  lifecycleError?: string | null;
+}
+
 /**
  * Reads the failure from run state (`conclusion.failure`); the run summary the
- * status popover reads doesn't carry the message or the command's output.
+ * status popover reads doesn't carry the message or the command's output. A
+ * dead run has no conclusion, so its reason comes from the summary instead.
  */
 export function buildRunFailureView(
   state: FailureState | null | undefined,
-  providerNames: ReadonlyMap<string, string> = new Map(),
+  { providerNames = new Map(), lifecycleError = null }: RunFailureContext = {},
 ): RunFailureView | null {
   const kind = state?.status?.kind;
   if (!state || (kind !== "failed" && kind !== "dead")) return null;
   const failure = state.conclusion?.failure;
-  if (!failure?.detail.message || failure.reason === FailureReason.CANCELLED) return null;
+  if (!failure) return kind === "dead" ? deadRunView(state, lifecycleError) : null;
+  if (!failure.detail.message || failure.reason === FailureReason.CANCELLED) return null;
 
   const { message, category } = failure.detail;
   const output = outputTail(failure.detail.exec_output_tail);
@@ -51,6 +60,19 @@ export function buildRunFailureView(
     message,
     provider: request?.provider ?? null,
     output,
+  };
+}
+
+/** A run whose worker went away before the run concluded. */
+function deadRunView(state: FailureState, lifecycleError: string | null): RunFailureView {
+  const message = lifecycleError?.trim() || "The run ended without recording a reason.";
+  return {
+    stage: stoppedAt(state.stages),
+    headline: lifecycleError?.trim() ? firstSentence(message) : "The run's worker stopped before the run finished",
+    nextStep: `Open the failed step's logs for details. To run it again, ${RETRY}.`,
+    message,
+    provider: null,
+    output: null,
   };
 }
 

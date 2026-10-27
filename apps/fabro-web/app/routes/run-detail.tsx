@@ -156,7 +156,10 @@ export default function RunDetail({ params }: { params: { id: string } }) {
     () => new Map((providersQuery.data?.data ?? []).map((p) => [p.id, p.display_name || p.id])),
     [providersQuery.data],
   );
-  const failure = buildRunFailureView(runStateQuery.data, providerNames);
+  const failure = buildRunFailureView(runStateQuery.data, {
+    providerNames,
+    lifecycleError: runQuery.data?.lifecycle.error?.message,
+  });
 
   const handleLifecycleMutationResult = useCallback(
     (
