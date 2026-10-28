@@ -251,7 +251,7 @@ pub(crate) enum InvalidSourceError {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InvalidSettingsError {
-    #[error("Failed to parse run config TOML")]
+    #[error("Failed to parse run config TOML at {path}")]
     Parse {
         path:   ManifestPath,
         #[source]
@@ -732,7 +732,10 @@ key = "value"
             panic!("unknown settings key should fail");
         };
 
-        assert_eq!(error.to_string(), "Failed to parse run config TOML");
+        assert_eq!(
+            error.to_string(),
+            "Failed to parse run config TOML at flows/workflow.toml"
+        );
         let source = error
             .source()
             .expect("parse error should retain the TOML source");

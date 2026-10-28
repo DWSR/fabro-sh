@@ -31,69 +31,35 @@ fn should_skip_object(obj: &serde_json::Map<String, Value>) -> bool {
     }
 }
 
-fn walk_replacements(
-    v: &Value,
-    seen: &mut std::collections::HashSet<String>,
-    repls: &mut Vec<(String, String)>,
-) {
-    match v {
-        Value::Object(obj) => {
-            if should_skip_object(obj) {
-                return;
-            }
-            for (k, child) in obj {
-                if should_skip_field(k) {
-                    continue;
-                }
-                walk_replacements(child, seen, repls);
-            }
-        }
-        Value::Array(arr) => {
-            for child in arr {
-                walk_replacements(child, seen, repls);
-            }
-        }
-        Value::String(s) => {
-            let redacted = super::redact_string(s);
-            if redacted != *s && seen.insert(s.clone()) {
-                repls.push((s.clone(), redacted));
-            }
-        }
-        _ => {}
+fn redact_json_tree(value: &mut Value, skip_field: bool) -> bool {
+    if skip_field {
+        return false;
     }
-}
-
-/// Walk a parsed JSON value and collect (original, redacted) string pairs.
-fn collect_replacements(v: &Value) -> Vec<(String, String)> {
-    let mut seen = std::collections::HashSet::new();
-    let mut repls = Vec::new();
-    walk_replacements(v, &mut seen, &mut repls);
-    repls
-}
-
-fn redact_json_tree(value: &mut Value, skip_field: bool) {
+    let mut changed = false;
     match value {
         Value::Object(obj) => {
             if should_skip_object(obj) {
-                return;
+                return false;
             }
             for (key, child) in obj {
-                redact_json_tree(child, should_skip_field(key));
+                changed |= redact_json_tree(child, should_skip_field(key));
             }
         }
         Value::Array(arr) => {
             for child in arr {
-                redact_json_tree(child, false);
+                changed |= redact_json_tree(child, false);
             }
         }
-        Value::String(text) if !skip_field => {
+        Value::String(text) => {
             let redacted = super::redact_string(text);
             if redacted != *text {
                 *text = redacted;
+                changed = true;
             }
         }
         _ => {}
     }
+    changed
 }
 
 pub fn redact_json_value(mut value: Value) -> Value {
@@ -101,16 +67,11 @@ pub fn redact_json_value(mut value: Value) -> Value {
     value
 }
 
-/// JSON-encode a string value (with quotes), without HTML escaping.
-fn json_encode_string(s: &str) -> String {
-    serde_json::to_string(s).unwrap_or_else(|_| format!("\"{s}\""))
-}
-
 /// Redact secrets in a single JSONL line.
 ///
-/// Parses the line as JSON to determine which string values need redaction,
-/// then performs targeted replacements on the raw JSON bytes. Lines with no
-/// secrets are returned unchanged, preserving original formatting.
+/// Redacts the parsed JSON tree so skipped fields, object keys, and image
+/// objects remain untouched even when they repeat a scanned string. Lines
+/// with no redactions are returned unchanged, preserving original formatting.
 ///
 /// Falls back to `redact_string` on invalid JSON.
 pub fn redact_jsonl_line(line: &str) -> String {
@@ -119,23 +80,16 @@ pub fn redact_jsonl_line(line: &str) -> String {
         return line.to_string();
     }
 
-    let parsed: Value = match serde_json::from_str(trimmed) {
+    let mut parsed: Value = match serde_json::from_str(trimmed) {
         Ok(v) => v,
         Err(_) => return super::redact_string(line),
     };
 
-    let repls = collect_replacements(&parsed);
-    if repls.is_empty() {
+    if !redact_json_tree(&mut parsed, false) {
         return line.to_string();
     }
 
-    let mut result = line.to_string();
-    for (orig, redacted) in &repls {
-        let orig_json = json_encode_string(orig);
-        let redacted_json = json_encode_string(redacted);
-        result = result.replace(&orig_json, &redacted_json);
-    }
-    result
+    serde_json::to_string(&parsed).expect("a parsed JSON value should serialize")
 }
 
 #[cfg(test)]
@@ -250,6 +204,86 @@ mod tests {
     #[test]
     fn redact_jsonl_line_no_secrets() {
         let input = r#"{"type":"text","content":"hello"}"#;
+        assert_eq!(redact_jsonl_line(input), input);
+    }
+
+    #[test]
+    fn redact_jsonl_line_preserves_ids_repeated_in_scanned_values() {
+        // Redacting an event's context value must not also rewrite its
+        // envelope, even when the envelope's ID field holds the same text.
+        let input = serde_json::json!({
+            "run_id": HIGH_ENTROPY_SECRET,
+            "item": { "context": { "value": HIGH_ENTROPY_SECRET } },
+        });
+        let result = redact_jsonl_line(&input.to_string());
+        let redacted: Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(redacted["run_id"], HIGH_ENTROPY_SECRET);
+        assert_eq!(redacted["item"]["context"]["value"], "REDACTED");
+        assert_eq!(redacted, redact_json_value(input));
+    }
+
+    #[test]
+    fn redact_jsonl_line_keeps_run_ids_wherever_they_appear() {
+        // This run ID from a failed CLI attach exceeds the entropy threshold
+        // on its own; the ULID exemption keeps it intact in scanned values,
+        // not only in the skipped `run_id` envelope field.
+        let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
+        let input = serde_json::json!({
+            "run_id": run_id,
+            "item": { "record": {
+                "web_url": format!("http://localhost:3000/runs/{run_id}"),
+                "run_branch": format!("fabro/run/{run_id}"),
+                "message": format!("checkpoint for run {run_id}: {HIGH_ENTROPY_SECRET}"),
+            } },
+        });
+        let result = redact_jsonl_line(&input.to_string());
+        let redacted: Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(redacted["run_id"], run_id);
+        assert_eq!(
+            redacted["item"]["record"]["web_url"],
+            format!("http://localhost:3000/runs/{run_id}")
+        );
+        assert_eq!(
+            redacted["item"]["record"]["run_branch"],
+            format!("fabro/run/{run_id}")
+        );
+        assert_eq!(
+            redacted["item"]["record"]["message"],
+            format!("checkpoint for run {run_id}: REDACTED")
+        );
+    }
+
+    #[test]
+    fn redact_jsonl_line_preserves_keys_and_skipped_objects_with_shared_values() {
+        let input = serde_json::json!({
+            HIGH_ENTROPY_SECRET: "unchanged key",
+            "content": HIGH_ENTROPY_SECRET,
+            "image": { "type": "image", "data": HIGH_ENTROPY_SECRET },
+            "path": HIGH_ENTROPY_SECRET,
+            "session_ids": [HIGH_ENTROPY_SECRET],
+        });
+        let redacted: Value = serde_json::from_str(&redact_jsonl_line(&input.to_string())).unwrap();
+
+        assert_eq!(redacted[HIGH_ENTROPY_SECRET], "unchanged key");
+        assert_eq!(redacted["content"], "REDACTED");
+        assert_eq!(redacted["image"]["data"], HIGH_ENTROPY_SECRET);
+        assert_eq!(redacted["path"], HIGH_ENTROPY_SECRET);
+        assert_eq!(redacted["session_ids"][0], HIGH_ENTROPY_SECRET);
+        assert_eq!(redacted, redact_json_value(input));
+    }
+
+    #[test]
+    fn redact_jsonl_line_scans_decoded_strings() {
+        let input = format!(r#"{{"content":"\u0073{}"}}"#, &HIGH_ENTROPY_SECRET[1..]);
+        let redacted: Value = serde_json::from_str(&redact_jsonl_line(&input)).unwrap();
+        assert_eq!(redacted["content"], "REDACTED");
+    }
+
+    #[test]
+    fn redact_jsonl_line_preserves_formatting_without_redactions() {
+        let input = "  { \"content\" : \"hello\", \"number\": 1.00 }\n";
         assert_eq!(redact_jsonl_line(input), input);
     }
 

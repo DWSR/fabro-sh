@@ -364,12 +364,10 @@ pub fn llm_overlay_with_provider_base_url(
     provider: impl Into<String>,
     base_url: impl Into<String>,
 ) -> LlmLayer {
-    let provider = provider.into();
-    llm_overlay_from_toml(&format!(
-        "[providers.{}]\nbase_url = {}\n",
-        toml::Value::String(provider),
-        toml::Value::String(base_url.into())
-    ))
+    LlmLayer::from_providers([(
+        provider.into(),
+        toml::Table::from_iter([("base_url".into(), toml::Value::String(base_url.into()))]),
+    )])
 }
 
 /// The catalog a test app state builds from `overlay`.

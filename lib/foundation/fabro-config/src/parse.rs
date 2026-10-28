@@ -31,6 +31,7 @@ const LEGACY_LLM_KEYS: &[&str] = &[
 pub enum ParseError {
     Toml(String),
     Version(VersionError),
+    RemovedRunPrepare,
     UnknownTopLevelKey {
         key:  String,
         hint: Option<String>,
@@ -45,6 +46,9 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(msg) => write!(f, "settings file is not valid TOML: {msg}"),
+            Self::RemovedRunPrepare => f.write_str(
+                "`run.prepare` is no longer supported; move setup into ordinary command nodes after start, with explicit timeout and failure policy. See https://docs.fabro.sh/execution/run-configuration#setup-command-migration.",
+            ),
             Self::Version(err) => fmt::Display::fmt(err, f),
             Self::UnknownTopLevelKey { key, hint } => {
                 if let Some(hint) = hint {
@@ -89,7 +93,15 @@ impl fmt::Display for VersionError {
 impl std::error::Error for VersionError {}
 
 pub(crate) fn parse_settings(input: &str) -> Result<SettingsLayer, ParseError> {
-    let raw: toml::Value = toml::from_str(input).map_err(|e| ParseError::Toml(e.to_string()))?;
+    let raw: toml::Value =
+        toml::from_str(input).map_err(|e| ParseError::Toml(e.message().to_owned()))?;
+    if raw
+        .get("run")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|run| run.contains_key("prepare"))
+    {
+        return Err(ParseError::RemovedRunPrepare);
+    }
     validate_version(&raw).map_err(ParseError::Version)?;
 
     if let Some(table) = raw.as_table() {
@@ -119,7 +131,7 @@ pub(crate) fn parse_settings(input: &str) -> Result<SettingsLayer, ParseError> {
     }
 
     raw.try_into::<SettingsLayer>()
-        .map_err(|e| ParseError::Toml(e.to_string()))
+        .map_err(|e| ParseError::Toml(e.message().to_owned()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +211,7 @@ fn rename_hint(key: &str) -> Option<String> {
         "labels" => "move to `[run.metadata]`",
         "llm" => "rename to `[run.model]`",
         "vars" => "rename to `[run.inputs]`",
-        "setup" => "rename to `[run.prepare]`",
+        "setup" => "move setup into ordinary command nodes after start",
         "sandbox" => "rename to `[run.environment]` and `[environments.<slug>]`",
         "checkpoint" => "move under `[run.checkpoint]`",
         "pull_request" => "move under `[run.pull_request]`",
@@ -233,6 +245,24 @@ fn rename_hint(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preparation_mentions_in_comments_and_script_strings_are_not_settings() {
+        let input = r#"# [run.prepare]
+[[run.hooks]]
+event = "run_start"
+script = "echo '[run.prepare]'"
+"#;
+        assert!(input.parse::<SettingsLayer>().is_ok());
+    }
+
+    #[test]
+    fn malformed_toml_diagnostics_do_not_echo_values() {
+        let error = "[run.prepare]\nscript = \"do-not-print-this-value"
+            .parse::<SettingsLayer>()
+            .unwrap_err();
+        assert!(!error.to_string().contains("do-not-print-this-value"));
+    }
 
     #[test]
     fn parses_empty_file() {

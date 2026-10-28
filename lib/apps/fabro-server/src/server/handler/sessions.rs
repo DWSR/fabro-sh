@@ -1523,10 +1523,8 @@ enabled = true
                 .unwrap(),
             (openrouter, "future-model".to_string())
         );
-        assert_eq!(
-            canonical_session_model(&catalog, &both, Some("future-model"), None).unwrap(),
-            (openai, "future-model".to_string())
-        );
+        // Without a pin there is no provider to pass through on.
+        assert!(canonical_session_model(&catalog, &both, Some("future-model"), None).is_err());
     }
 
     /// A colon in a model ID does not make it provider-qualified. Ollama
@@ -1548,9 +1546,8 @@ enabled = true
             .unwrap(),
             (openrouter, "future-model:latest".to_string())
         );
-        assert_eq!(
-            canonical_session_model(&catalog, &both, Some("future-model:latest"), None).unwrap(),
-            (openai, "future-model:latest".to_string())
+        assert!(
+            canonical_session_model(&catalog, &both, Some("future-model:latest"), None).is_err()
         );
     }
 

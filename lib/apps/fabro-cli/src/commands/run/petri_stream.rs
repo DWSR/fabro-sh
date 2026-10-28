@@ -25,12 +25,13 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, TimeZone as _, Utc};
 use fabro_redact::redact_jsonl_line;
-use fabro_types::{RunId, RunStreamItem, RunStreamItemKind};
+use fabro_types::{RunId, RunStreamItem, RunStreamItemKind, StageOutcome};
 use fabro_util::terminal::Styles;
 use serde_json::Value;
 use tokio::time;
 use tracing::debug;
 
+use super::stage_presentation::StagePresentation;
 use crate::args::EventsArgs;
 use crate::server_client;
 use crate::shared::{format_duration_ms, format_usd_micros};
@@ -338,22 +339,29 @@ pub(crate) fn format_pretty(
             let status = outcome.get("status").and_then(Value::as_str).unwrap_or("?");
             let duration = format_duration_ms(elapsed.unwrap_or(0));
             if !executed || status == "skipped" {
+                let presentation = StagePresentation::new(StageOutcome::Skipped, styles);
                 return Some(format!(
                     "{ts} {} {}  {}",
-                    styles.dim.apply_to("\u{2298}"),
+                    presentation.glyph,
                     styles.bold.apply_to(label),
-                    styles.dim.apply_to("skipped"),
+                    presentation.label.unwrap_or_default(),
                 ));
             }
             match status {
                 "success" | "partial_success" => {
+                    let outcome_kind = if status == "partial_success" {
+                        StageOutcome::PartiallySucceeded
+                    } else {
+                        StageOutcome::Succeeded
+                    };
+                    let presentation = StagePresentation::new(outcome_kind, styles);
                     let mut line = format!(
                         "{ts} {} {}",
-                        styles.green.apply_to("\u{2713}"),
+                        presentation.glyph,
                         styles.bold.apply_to(label),
                     );
-                    if status == "partial_success" {
-                        let _ = write!(line, "  {}", styles.yellow.apply_to("partial"));
+                    if let Some(label) = presentation.label {
+                        let _ = write!(line, "  {label}");
                     }
                     let _ = write!(line, "  {duration}");
                     if let Some(usage) = usage_summary(outcome, styles) {
@@ -362,13 +370,19 @@ pub(crate) fn format_pretty(
                     Some(line)
                 }
                 other => {
+                    let presentation = StagePresentation::new(
+                        StageOutcome::Failed {
+                            retry_requested: false,
+                        },
+                        styles,
+                    );
                     let error = outcome
                         .pointer("/failure/message")
                         .and_then(Value::as_str)
                         .unwrap_or(other);
                     Some(format!(
                         "{ts} {} {}  {}",
-                        styles.red.apply_to("\u{2717}"),
+                        presentation.glyph,
                         styles.bold.apply_to(label),
                         styles.red.apply_to(error),
                     ))
@@ -1324,5 +1338,40 @@ mod tests {
         assert_eq!(value["stream_seq"], 2);
         assert_eq!(value["kind"], "platform");
         assert_eq!(value["item"]["record"]["kind"], "run.notice");
+    }
+
+    #[test]
+    fn redacted_raw_lines_keep_the_typed_run_id() {
+        let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
+        let secret = "xK9mZ2vL8nQ5rT1wY4bC7dF0gH3jE6p";
+        let mut event = petri(1, json!({"record": {"body": {"value": secret}}}));
+        event.run_id = run_id.parse().expect("a valid run ID");
+
+        let line = raw_line(&event).expect("a redacted line");
+        let decoded: RunStreamItem = serde_json::from_str(&line).expect("a valid stream item");
+        assert_eq!(decoded.run_id, event.run_id);
+        assert_eq!(decoded.stream_seq, event.stream_seq);
+        assert_eq!(decoded.item["record"]["body"]["value"], "REDACTED");
+    }
+
+    #[test]
+    fn raw_lines_preserve_run_ids_that_cross_the_entropy_threshold() {
+        // This ID has enough distinct characters to read as a secret to the
+        // entropy scanner; the Web UI link and run branch must survive.
+        let run_id = "01M5228EHCT0P73Z4BYGDRWJNS";
+        for (kind, field, text) in [
+            (
+                "run.created",
+                "web_url",
+                format!("http://localhost:3000/runs/{run_id}"),
+            ),
+            ("run.branch", "run_branch", format!("fabro/run/{run_id}")),
+        ] {
+            let mut event = platform(1, &json!({"kind": kind, field: text, "content": run_id}));
+            event.run_id = run_id.parse().expect("a valid run ID");
+            let line = raw_line(&event).expect("a redacted line");
+            let decoded: RunStreamItem = serde_json::from_str(&line).expect("a valid stream item");
+            assert_eq!(decoded, event);
+        }
     }
 }

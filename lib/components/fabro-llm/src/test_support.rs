@@ -35,10 +35,11 @@ pub fn test_catalog_with_overlay(overlay: &str) -> Catalog {
 /// The test catalog with one provider's base URL pointed elsewhere.
 #[must_use]
 pub fn test_catalog_with_provider_base_url(provider: &str, base_url: &str) -> Catalog {
-    test_catalog_with_overlay(&format!(
-        "[providers.{provider}]\nbase_url = {}\n",
-        toml::Value::String(base_url.to_string())
-    ))
+    let overlay = LlmLayer::from_providers([(
+        provider.to_string(),
+        toml::Table::from_iter([("base_url".into(), toml::Value::String(base_url.to_string()))]),
+    )]);
+    crate::build_catalog(&overlay, &|_| None).expect("test catalog should build")
 }
 
 /// Builds a text response attributed to `provider/model`.

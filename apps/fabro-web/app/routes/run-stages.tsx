@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 import {
   ArrowDownTrayIcon,
   ChevronDownIcon,
@@ -38,6 +38,7 @@ import type {
   ThreadDnaItem,
   ThreadDnaSelection,
 } from "../components/event-debug";
+import { stageIdFromPathname, stagePath } from "../lib/stage-routes";
 import { StageContext } from "../components/stage-context";
 import { StageInsightsSidebar } from "../components/stage-insights-sidebar";
 import { StageSidebar } from "../components/stage-sidebar";
@@ -2374,7 +2375,7 @@ function RunStageActivityStage({
               <p className="pb-2 text-xs text-fg-muted">
                 Resumed from{" "}
                 <Link
-                  to={`/runs/${runId}/stages/${encodeURIComponent(selectedStage.resumedFromStageId)}`}
+                  to={stagePath(runId, selectedStage.resumedFromStageId)}
                   className="font-mono text-teal-500 hover:underline"
                 >
                   {selectedStage.resumedFromStageId}
@@ -2526,7 +2527,9 @@ function RunStageActivity({
 }
 
 export default function RunStages() {
-  const { id, stageId } = useParams();
+  const { id, stageId: stageParam } = useParams();
+  const { pathname } = useLocation();
+  const stageId = stageIdFromPathname(pathname);
   const runQuery = useRun(id);
   const stagesQuery = useRunStages(id);
   const stages = useMemo(
@@ -2535,7 +2538,9 @@ export default function RunStages() {
   );
 
   const selectedStage =
-    stages.find((s: Stage) => s.id === stageId) ?? stages[0];
+    stageParam === undefined
+      ? stages[0]
+      : stages.find((s: Stage) => s.id === stageId);
   const selectedStageId = selectedStage?.id;
   const runStart =
     selectedStage?.startedAt ??
@@ -2562,6 +2567,25 @@ export default function RunStages() {
     isAgentStage && selectedStageId
       ? runStateQuery.data?.stages[selectedStageId]
       : undefined;
+
+  if (stagesQuery.isLoading && !stagesQuery.data) {
+    return (
+      <div className="py-12">
+        <EmptyState title="Loading stages" description="Fetching the run’s stages." />
+      </div>
+    );
+  }
+
+  if (id && stageParam !== undefined && !selectedStage) {
+    return (
+      <div className="py-12">
+        <EmptyState
+          title="Stage not found"
+          description="This stage occurrence is not available in this run."
+        />
+      </div>
+    );
+  }
 
   if (!id || !selectedStage) {
     return (

@@ -10,7 +10,6 @@ import type { RunStage } from "@qltysh/fabro-api-client";
 import TestRenderer, { act } from "react-test-renderer";
 import { MemoryRouter } from "react-router";
 
-import { PlatformRecordsPanelView } from "../components/platform-records-panel";
 import { RunWaterfall } from "../components/run-waterfall";
 import { StageSidebar } from "../components/stage-sidebar";
 import { FanInResults } from "../components/stage-renderers/fan-in-results";
@@ -25,11 +24,12 @@ import {
   itemsForStage,
   parallelOverviewFromProjection,
   parsePetriInterviewPairs,
-  platformRecordsOf,
+  petriParsed,
   reducerTranscriptFromProjection,
   stagesFromProjection,
 } from "../lib/petri-stream";
 import { setupReactTestEnv } from "../lib/test-utils";
+import { getObject } from "../lib/unknown";
 import { StreamEventsView } from "./run-events";
 import { StageChatView, buildPetriStageActivity } from "./run-stages";
 
@@ -177,8 +177,8 @@ describe("a two-branch parallel run", () => {
       />,
     );
     expect(html).toContain("Branches");
-    expect(html).toContain("/runs/run-1/stages/a@1");
-    expect(html).toContain("/runs/run-1/stages/b@1");
+    expect(html).toContain("/runs/run-1/stages/a%401");
+    expect(html).toContain("/runs/run-1/stages/b%401");
     expect((html.match(/Succeeded/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
@@ -195,7 +195,7 @@ describe("a two-branch parallel run", () => {
     expect(html).not.toContain("Reducer transcript");
   });
 
-  test("the events view lists Petri events by name and the platform notice", () => {
+  test("the events view lists Petri events, platform notices and checkpoints", () => {
     const html = render(
       <StreamEventsView
         rows={debugRowsFromStream(fixture.stream)}
@@ -210,27 +210,9 @@ describe("a two-branch parallel run", () => {
       expect(html).toContain(name);
     }
     expect(html).toContain("run.notice");
+    expect(html).toContain("checkpoint");
     expect(html).toContain('"data-stage":"a@1"');
     expect(html).toContain(`${fixture.stream.length} items`);
-  });
-
-  test("the overview lists the platform records", () => {
-    const html = render(
-      <PlatformRecordsPanelView
-        records={platformRecordsOf(fixture.stream)}
-        projection={fixture.projection}
-      />,
-    );
-    expect(html).toContain("Platform records");
-    expect(html).toContain("Notice");
-    expect(html).toContain("recorded while both branches ran");
-    // The checkpoint hook wrote one record per stage, with its commit.
-    expect(html).toContain("Checkpoint");
-    const checkpoint = fixture.stream.find(
-      (item) => item.kind === "platform" && item.item.record?.kind === "checkpoint",
-    );
-    expect(checkpoint).toBeDefined();
-    expect(html).toContain(String(checkpoint!.item.record.git_commit_sha).slice(0, 12));
   });
 
   test("the sidebar groups the branches under the fork", () => {
@@ -274,12 +256,56 @@ describe("a human gate answered through the API", () => {
         runId="run-1"
       />,
     );
-    expect(html).toContain("/runs/run-1/stages/no@1");
+    expect(html).toContain("/runs/run-1/stages/no%401");
     expect(html).not.toContain("No target");
   });
 
   test("no question is left pending in the projection", () => {
     expect(Object.keys(fixture.projection.pending_interviews)).toEqual([]);
     expect(stages.map((stage) => stage.id)).toEqual(["start@1", "gate@1", "no@1", "exit@1"]);
+  });
+
+  test.each([
+    ["https://example.com/review/%2Fdraft?revision=one&token=a%2Bb#feedback", true],
+    ["javascript:alert(1)", false],
+    ["https://user:password@example.com/review", false],
+    ["/relative/review", false],
+    ["ftp://example.com/review", false],
+  ])("answered Q&A preserves safe review links after replay: %s", (url, linked) => {
+    // Add a reference to the real API-captured gate stream; keep its delivered
+    // answer and settled projection, which has no pending interview left.
+    const stream = structuredClone(fixture.stream);
+    const question = stream.map((item) => getObject(petriParsed(item), "question")).find(Boolean)!;
+    question.text = "Review the design document, then choose the next action.";
+    question.reference = { label: "Design review", url, kind: "document" };
+    const gate = stages.find((stage) => stage.id === "gate@1")!;
+
+    for (const events of [stream, JSON.parse(JSON.stringify(stream))]) {
+      let renderer!: TestRenderer.ReactTestRenderer;
+      act(() => {
+        renderer = TestRenderer.create(
+          <HumanQA stage={gate} pairs={parsePetriInterviewPairs(events)} />,
+        );
+      });
+      try {
+        const links = renderer.root.findAllByType("a");
+        expect(links).toHaveLength(linked ? 1 : 0);
+        if (linked) {
+          expect(links[0].props).toMatchObject({
+            href: url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            referrerPolicy: "no-referrer",
+          });
+          expect(links[0].findByType("span").children).toEqual(["Design review"]);
+        } else {
+          expect(JSON.stringify(renderer.toJSON())).toContain(question.text);
+        }
+        expect(JSON.stringify(renderer.toJSON())).toContain("Answered");
+        expect(JSON.stringify(renderer.toJSON())).toContain("dev");
+      } finally {
+        act(() => renderer.unmount());
+      }
+    }
   });
 });

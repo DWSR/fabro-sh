@@ -31,6 +31,7 @@ import { formatContextWindow, formatTokensPerSecond } from "../lib/format";
 import {
   modelOfferingKey,
   modelOfferingTestArgs,
+  providerNamesById,
 } from "../lib/model-offerings";
 import { useDebouncedValue } from "../hooks/effects";
 
@@ -244,11 +245,7 @@ function ModelsSection({ providers }: { providers: Provider[] }) {
 
   const { data, isLoading } = useModels(providerFilter, debouncedSearch);
 
-  const providerNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of providers) map.set(p.id, p.display_name || p.id);
-    return map;
-  }, [providers]);
+  const providerNameById = useMemo(() => providerNamesById(providers), [providers]);
 
   const rows = useMemo(() => {
     const all = (data?.data ?? []).filter((m) => m.configured);

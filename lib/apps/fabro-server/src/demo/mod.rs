@@ -1054,8 +1054,7 @@ mod runs {
     use fabro_api::types::*;
     use fabro_types::settings::run::{
         EnvironmentImageSettings, EnvironmentLifecycleSettings, EnvironmentResourcesSettings,
-        EnvironmentSettings, PreparedStep, PreparedStepRun, RunEnvironmentSettings, RunGoal,
-        RunModelSettings, RunNamespace, RunPrepareSettings,
+        EnvironmentSettings, RunEnvironmentSettings, RunGoal, RunModelSettings, RunNamespace,
     };
     use fabro_types::settings::{InterpString, ProjectNamespace, WorkflowNamespace};
     use fabro_types::{
@@ -1867,23 +1866,6 @@ mod runs {
                     provider: Some("anthropic".to_string()),
                     name: Some("claude-opus-4-6".to_string()),
                     ..RunModelSettings::default()
-                },
-                prepare: RunPrepareSettings {
-                    steps:      vec![
-                        PreparedStep {
-                            run: PreparedStepRun::Script {
-                                script: "bun install".to_string(),
-                            },
-                            env: HashMap::new(),
-                        },
-                        PreparedStep {
-                            run: PreparedStepRun::Script {
-                                script: "bun run typecheck".to_string(),
-                            },
-                            env: HashMap::new(),
-                        },
-                    ],
-                    timeout_ms: 120_000,
                 },
                 environment: RunEnvironmentSettings::from_environment(
                     "api-server".to_string(),

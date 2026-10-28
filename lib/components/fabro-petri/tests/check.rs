@@ -482,3 +482,61 @@ async fn dry_run_admission_makes_nested_scopes_local_and_preserves_graph_digests
     assert_eq!(loaded.graph, dry_run.graph);
     assert_eq!(loaded.children, dry_run.children);
 }
+
+/// Keep this at the actual embedded frontend boundary: rejecting the key in
+/// Fabro's config parser alone would still admit a stored old workflow version.
+#[test]
+fn invalid_settings_are_rejected_by_the_embedded_frontend_in_every_layer() {
+    for source in ["workflow.toml", ".fabro/project.toml", "settings.toml"] {
+        for (syntax, code) in [
+            ("[run.prepare]", "unsupported.workflow_toml.run.prepare"),
+            (
+                "[run.prepare]\nsteps = []",
+                "unsupported.workflow_toml.run.prepare",
+            ),
+            (
+                "run.prepare = false",
+                "unsupported.workflow_toml.run.prepare",
+            ),
+            (
+                "run.prepare = 'private-value' broken",
+                "fabro.settings.toml",
+            ),
+        ] {
+            let mut request = request(
+                bundle(&[
+                    ("workflow.fabro", COMMAND_WORKFLOW),
+                    ("workflow.toml", SETTINGS),
+                ]),
+                RuntimeSpec::default(),
+            );
+            match source {
+                "settings.toml" => request.runtime.settings_toml = Some(syntax.into()),
+                ".fabro/project.toml" => request.bundle.project_toml = Some(syntax.into()),
+                _ => {
+                    request.bundle.files.insert(source.into(), syntax.into());
+                }
+            }
+            let error = check::check(&request)
+                .err()
+                .expect("invalid settings must not admit");
+            let CheckError::Rejected(diagnostics) = error else {
+                panic!("expected admission diagnostics")
+            };
+            let diagnostic = diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.code == code)
+                .expect("the embedded frontend preserves the specific diagnostic");
+            assert!(diagnostic.message.contains(source));
+            assert!(!format!("{diagnostics:?}").contains("private-value"));
+            if code == "unsupported.workflow_toml.run.prepare" {
+                assert!(
+                    diagnostic
+                        .hint
+                        .as_deref()
+                        .is_some_and(|hint| hint.contains("command"))
+                );
+            }
+        }
+    }
+}

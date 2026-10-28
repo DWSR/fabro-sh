@@ -83,7 +83,7 @@ export interface StageContextData {
 export interface EdgeSelection {
   fromNode: string;
   toNode: string;
-  reason: string;
+  reason: "condition" | "unconditional" | "preferred_label" | "unknown";
   condition: string | null;
 }
 

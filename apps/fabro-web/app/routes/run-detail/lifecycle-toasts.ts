@@ -7,6 +7,7 @@ import {
   canArchive,
   canCancel,
   canDelete,
+  canRetry,
   canUnarchive,
   cancellationSuccessMessage,
   mapError,
@@ -55,6 +56,7 @@ export function updateLifecycleToastState(
 export function lifecycleActionVisibility(status: string | null | undefined) {
   return {
     showPrimaryCancel: canCancel(status),
+    showRetry: canRetry(status),
     showArchive: canArchive(status),
     showUnarchive: canUnarchive(status),
     showDelete: canDelete(status),

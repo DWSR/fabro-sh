@@ -21,8 +21,6 @@ mock.module("../lib/queries", () => ({
     mutate:    graphMutateMock,
   }),
   useRunGraphSource: () => ({ data: undefined }),
-  useRunState: () => ({ data: undefined }),
-  useRunStream: () => ({ data: undefined }),
 }));
 
 mock.module("../components/run-summary-panel", () => ({

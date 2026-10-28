@@ -2905,3 +2905,51 @@ fn attach_json_errors_without_prompting_for_human_input() {
         });
     wait_for_status(&run.run_dir, &["succeeded"]);
 }
+
+#[test]
+fn attach_base_header_preserves_the_saved_source_branch() {
+    let context = test_context!();
+    let workflow = super::support::write_workflow(&context.temp_dir, "base-header", "BaseHeader");
+    let workspace = context.temp_dir.join("source");
+    context.write_temp("source/README.md", "source commit\n");
+    let source_sha = super::support::init_remote_fixture(&workspace, "main");
+    let run = context
+        .run_cmd()
+        .args([
+            "--auto-approve",
+            "--detach",
+            "--environment",
+            "local",
+            "--target-from",
+        ])
+        .arg(&workspace)
+        .arg(&workflow)
+        .timeout(SHARED_DAEMON_TIMEOUT)
+        .assert()
+        .success();
+    let run_id = created_run_id(run.get_output());
+    context
+        .command()
+        .args(["wait", &run_id])
+        .timeout(SHARED_DAEMON_TIMEOUT)
+        .assert()
+        .success();
+
+    // Reattach must use the stored source, even if the caller changes branches.
+    super::support::run_git(&workspace, &["checkout", "-b", "later"]);
+    let output = context
+        .command()
+        .args(["attach", &run_id])
+        .current_dir(&workspace)
+        .timeout(SHARED_DAEMON_TIMEOUT)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    let base_lines: Vec<_> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("Base:"))
+        .collect();
+    // Do not apply the shared Base filter: it would hide a wrong branch name.
+    assert_eq!(base_lines, [format!("Base: main ({})", &source_sha[..12])]);
+}

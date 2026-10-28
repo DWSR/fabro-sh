@@ -1,10 +1,11 @@
-import { isRouteErrorResponse, Outlet } from "react-router";
+import { isRouteErrorResponse, Outlet, useRouteError } from "react-router";
 
 export default function Root() {
   return <Outlet />;
 }
 
-export function ErrorBoundary({ error }: any) {
+export function ErrorBoundary() {
+  const error = useRouteError();
   let status = 500;
   let heading = "Something went wrong";
   let message = "An unexpected error occurred. Please try again.";

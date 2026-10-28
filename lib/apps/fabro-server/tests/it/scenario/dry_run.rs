@@ -167,6 +167,48 @@ async fn completion_non_streaming_returns_valid_json() {
     assert!(body["usage"]["output"].is_number());
 }
 
+/// A provider name in the model field, or a selector the catalog does not
+/// know, is refused before any provider is called. Neither may pass through
+/// to whichever ready provider wins priority.
+#[tokio::test]
+async fn completion_with_a_bare_provider_or_unknown_selector_is_rejected_before_any_call() {
+    let mock_server = MockServer::start_async().await;
+    let anthropic = mock_server
+        .mock_async(|when, then| {
+            when.method("POST").path("/v1/messages");
+            then.status(500);
+        })
+        .await;
+    let app = test_app_with_mock_anthropic(&format!("{}/v1", mock_server.url("")));
+
+    for (model, expected_detail) in [
+        ("gemini", "set provider = \"gemini\""),
+        ("anthropic", "set provider = \"anthropic\""),
+        (
+            "not-a-real-model",
+            "unknown model selector 'not-a-real-model'",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(completion_request_with_model(false, model))
+            .await
+            .unwrap();
+        let body = response_json(
+            response,
+            StatusCode::BAD_REQUEST,
+            &format!("POST /api/v1/completions with model {model}"),
+        )
+        .await;
+        let detail = body["errors"][0]["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.contains(expected_detail),
+            "model {model}: unexpected detail {detail:?}"
+        );
+    }
+    assert_eq!(anthropic.calls_async().await, 0);
+}
+
 #[tokio::test]
 async fn completion_streaming_returns_sse() {
     let mock_server = MockServer::start_async().await;

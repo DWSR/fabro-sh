@@ -75,28 +75,6 @@ C = "higher-c"
 }
 
 #[test]
-fn run_prepare_steps_replaces_whole_list() {
-    let lower = parse(
-        r#"
-[[run.prepare.steps]]
-script = "lower-1"
-
-[[run.prepare.steps]]
-script = "lower-2"
-"#,
-    );
-    let higher = parse(
-        r#"
-[[run.prepare.steps]]
-script = "higher-1"
-"#,
-    );
-    let merged = higher.combine(lower);
-    let steps = merged.run.unwrap().prepare.unwrap().steps;
-    assert_eq!(steps.len(), 1);
-}
-
-#[test]
 fn run_model_fallbacks_splice_inserts_inherited() {
     let lower = parse(
         r#"

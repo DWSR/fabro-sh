@@ -3,7 +3,7 @@
     reason = "sync CLI run-progress renderer: writes to std::io::stderr directly"
 )]
 
-use fabro_types::{RunNoticeCode, RunStreamItem};
+use fabro_types::{RunNoticeCode, RunSpec, RunStreamItem, RunTarget};
 
 mod event;
 mod info_display;
@@ -11,6 +11,8 @@ mod petri;
 mod renderer;
 mod stage_display;
 mod styles;
+#[cfg(test)]
+mod tests;
 
 use event::ProgressEvent;
 use info_display::InfoDisplay;
@@ -24,10 +26,11 @@ pub(crate) struct ProgressUI {
     info: InfoDisplay,
     saw_metadata_snapshot_failure: bool,
     petri: PetriProgressState,
+    source_branch: Option<String>,
 }
 
 impl ProgressUI {
-    pub(crate) fn new(is_tty: bool, verbose: bool) -> Self {
+    pub(crate) fn new(is_tty: bool, verbose: bool, spec: &RunSpec) -> Self {
         let renderer = if is_tty {
             ProgressRenderer::new_tty()
         } else {
@@ -36,7 +39,7 @@ impl ProgressUI {
                 console::colors_enabled_stderr(),
             )
         };
-        Self::with_renderer(renderer, verbose)
+        Self::with_renderer(renderer, verbose).with_source_spec(spec)
     }
 
     fn with_renderer(renderer: ProgressRenderer, verbose: bool) -> Self {
@@ -46,7 +49,23 @@ impl ProgressUI {
             info: InfoDisplay::new(verbose),
             saw_metadata_snapshot_failure: false,
             petri: PetriProgressState::default(),
+            source_branch: None,
         }
+    }
+
+    fn with_source_spec(mut self, spec: &RunSpec) -> Self {
+        // A fork starts at a checkpoint, and a tag need not name the input
+        // branch's history. Keep those bases commit-only instead of pairing
+        // the inherited working branch with an unrelated revision.
+        if spec.fork_source_ref.is_none()
+            && !matches!(&spec.target, Some(RunTarget::Git(target)) if target.tag.is_some())
+        {
+            self.source_branch = spec
+                .base_branch()
+                .filter(|branch| !branch.trim().is_empty())
+                .map(str::to_owned);
+        }
+        self
     }
 
     pub(crate) fn hide_bars(&self) {
@@ -80,14 +99,13 @@ impl ProgressUI {
             }
             ProgressEvent::WorkflowStarted {
                 worktree_dir,
-                base_branch,
                 base_sha,
             } => {
                 if let Some(worktree_dir) = worktree_dir {
                     InfoDisplay::show_worktree(renderer, std::path::Path::new(&worktree_dir));
                 }
                 if let Some(base_sha) = base_sha {
-                    InfoDisplay::show_base_info(renderer, base_branch.as_deref(), &base_sha);
+                    InfoDisplay::show_base_info(renderer, self.source_branch.as_deref(), &base_sha);
                 }
             }
             ProgressEvent::StageStarted {

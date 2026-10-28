@@ -238,37 +238,4 @@ mod tests {
             ("test", "join"),
         ]);
     }
-
-    #[test]
-    fn prepare_steps_are_stages_of_the_graph_they_run_in() {
-        let admitted = admit(&[
-            (
-                "workflow.fabro",
-                r#"digraph Prepared {
-                    start [shape=Mdiamond]
-                    work [prompt="Work"]
-                    exit [shape=Msquare]
-                    start -> work -> exit
-                }"#,
-            ),
-            (
-                "workflow.toml",
-                "_version = 1\n[run]\ngoal = \"Settings goal\"\n[[run.prepare.steps]]\nscript = \
-                 \"make setup\"\n",
-            ),
-        ]);
-
-        let graph = run_graph(&admitted);
-
-        assert_eq!(graph.goal(), "Settings goal");
-        assert_eq!(
-            graph.node("run_prepare_1").map(|node| node.kind),
-            Some(StageHandler::Command)
-        );
-        assert_eq!(edges(&graph), vec![
-            ("run_prepare_1", "work"),
-            ("start", "run_prepare_1"),
-            ("work", "exit"),
-        ]);
-    }
 }

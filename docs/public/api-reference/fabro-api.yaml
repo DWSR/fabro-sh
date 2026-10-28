@@ -8693,11 +8693,11 @@ components:
         expected_secret_name:
           type: ["string", "null"]
           description: |
-            Suggested vault secret name for configuring this provider,
-            derived from the first vault credential reference in the
-            provider catalog. Null when the provider has no vault
-            credential (e.g. no-auth or env-only providers). Used to
-            prefill the create-secret form.
+            Suggested vault secret name for configuring this provider: the
+            first conventional secret name for its catalog authentication scheme.
+            Null when that scheme declares no conventional secret names (for
+            example, no-auth providers). Used to prefill the create-secret form;
+            providers such as Modal require more than one secret.
 
     ProviderId:
       description: LLM provider identifier.
@@ -8868,10 +8868,12 @@ components:
         configured:
           type: boolean
           description: |
-            Whether credential material is present for this model's provider on the
-            server (vault entry or environment variable). Does NOT imply the
-            credential is valid or that requests will succeed; call
-            `POST /models/{id}/test` to verify usability.
+            Whether the server resolved credentials and built a client for this
+            model's provider. Provider API keys and OAuth records come from the
+            server vault, not process environment variables. Bedrock SigV4 uses
+            the separate AWS default credential chain; no-auth providers need no
+            key. Does NOT imply authentication or model requests will succeed;
+            call `POST /models/{id}/test` to test usability.
 
     ModelTestResult:
       description: Result of testing a model in `basic` or `deep` mode.
@@ -9012,12 +9014,16 @@ components:
         model:
           type: string
           description: >-
-            Model selector: `provider/model`, a model id or alias, or a
-            provider id. The server picks a ready-provider default when
-            omitted.
+            Model selector: `provider/model`, or a model id or alias. A bare
+            provider name is rejected; pin it with `provider` instead. When
+            omitted, the server picks the pinned provider's default model, or
+            a ready-provider default when `provider` is also omitted.
         provider:
           type: string
-          description: Optional provider pin for a bare model selector.
+          description: >-
+            Optional provider pin. Scopes a bare model selector to that
+            provider, which also lets an uncatalogued model id reach a
+            provider that allows passthrough.
         system:
           type: string
           description: System prompt (convenience; prepended as a system message).
@@ -12803,8 +12809,7 @@ components:
         The display graph of a run: the admitted workflow's name, goal,
         stages and edges, read off the graph Petri admitted at create time.
         Lowering artifacts (the goal check, a synthetic fan-in) are left out;
-        the stages are the nodes the workflow declares, imports and
-        `[run.prepare]` steps included.
+        the stages are the nodes the workflow declares, including imported nodes.
       type: object
       required: [name]
       properties:
@@ -15795,7 +15800,6 @@ components:
         - inputs
         - model
         - git
-        - prepare
         - execution
         - checkpoint
         - clone
@@ -15829,8 +15833,6 @@ components:
           $ref: "#/components/schemas/RunModelSettings"
         git:
           $ref: "#/components/schemas/RunGitSettings"
-        prepare:
-          $ref: "#/components/schemas/RunPrepareSettings"
         execution:
           $ref: "#/components/schemas/RunExecutionSettings"
         checkpoint:
@@ -15992,63 +15994,6 @@ components:
           type: ["string", "null"]
         email:
           type: ["string", "null"]
-
-    RunPrepareSettings:
-      type: object
-      required: [steps, timeout_ms]
-      properties:
-        steps:
-          type: array
-          items:
-            $ref: "#/components/schemas/PreparedStep"
-        timeout_ms:
-          type: integer
-          format: int64
-
-    PreparedStep:
-      description: |
-        A single resolved prepare step. The runnable part preserves the
-        script-vs-argv distinction via the `type` discriminator: a `script`
-        is a raw shell snippet kept verbatim, while a `command` is an argv
-        whose elements are shell-quoted and joined at the run boundary (after
-        `{{ secrets.* }}` resolution) so an interpolated value cannot inject shell
-        syntax. Optional per-step `env` is shared by both shapes.
-      type: object
-      required: [type]
-      oneOf:
-        - $ref: "#/components/schemas/PreparedScriptStep"
-        - $ref: "#/components/schemas/PreparedCommandStep"
-      discriminator:
-        propertyName: type
-        mapping:
-          script: "#/components/schemas/PreparedScriptStep"
-          command: "#/components/schemas/PreparedCommandStep"
-
-    PreparedScriptStep:
-      type: object
-      required: [type, script]
-      properties:
-        type:
-          type: string
-          enum: [script]
-        script:
-          type: string
-        env:
-          $ref: "#/components/schemas/StringMap"
-
-    PreparedCommandStep:
-      type: object
-      required: [type, command]
-      properties:
-        type:
-          type: string
-          enum: [command]
-        command:
-          type: array
-          items:
-            type: string
-        env:
-          $ref: "#/components/schemas/StringMap"
 
     RunExecutionSettings:
       type: object

@@ -9,9 +9,6 @@ graph = "workflow.fabro"
 mode = "normal"
 approval = "prompt"
 
-[run.prepare]
-timeout = "5m"
-
 [run.clone]
 enabled = true
 

@@ -5,17 +5,19 @@ import {
   ArrowsRightLeftIcon,
 } from "@heroicons/react/20/solid";
 
+import { stagePath } from "../../lib/stage-routes";
 import type { Stage } from "../stage-sidebar";
 import { StageMetaBar } from "./meta-bar";
 import type { EdgeSelection } from "./helpers";
 
-const REASON_LABEL: Record<string, string> = {
+const REASON_LABEL: Record<EdgeSelection["reason"], string> = {
   condition: "Matched condition",
   unconditional: "Default edge",
   preferred_label: "Preferred label",
+  unknown: "Reason unavailable",
 };
 
-function reasonLabel(reason: string): string {
+function reasonLabel(reason: EdgeSelection["reason"]): string {
   return REASON_LABEL[reason] ?? reason;
 }
 
@@ -67,7 +69,7 @@ export function ConditionalDecision({
           {edge ? (
             targetStage ? (
               <Link
-                to={`/runs/${runId}/stages/${targetStage.id}`}
+                to={stagePath(runId, targetStage.id)}
                 className="group rounded-md bg-teal-500/10 px-3 py-2 text-center transition-colors hover:bg-teal-500/20 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-teal-500"
               >
                 <div className="text-[10px] font-medium uppercase tracking-wider text-teal-500">

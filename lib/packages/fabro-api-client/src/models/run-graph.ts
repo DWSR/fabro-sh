@@ -21,7 +21,7 @@ import type { RunGraphEdge } from './run-graph-edge';
 import type { RunGraphNode } from './run-graph-node';
 
 /**
- * The display graph of a run: the admitted workflow\'s name, goal, stages and edges, read off the graph Petri admitted at create time. Lowering artifacts (the goal check, a synthetic fan-in) are left out; the stages are the nodes the workflow declares, imports and `[run.prepare]` steps included.
+ * The display graph of a run: the admitted workflow\'s name, goal, stages and edges, read off the graph Petri admitted at create time. Lowering artifacts (the goal check, a synthetic fan-in) are left out; the stages are the nodes the workflow declares, including imported nodes.
  */
 export interface RunGraph {
     /**

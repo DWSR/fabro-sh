@@ -106,7 +106,6 @@ fn resolves_run_defaults_from_empty_settings() {
 
     assert_eq!(settings.execution.mode, RunMode::Normal);
     assert_eq!(settings.execution.approval, ApprovalMode::Prompt);
-    assert_eq!(settings.prepare.timeout_ms, 300_000);
     assert_eq!(settings.environment.id, "default");
     assert_eq!(settings.environment.provider, SandboxProviderKind::DOCKER);
     assert_eq!(

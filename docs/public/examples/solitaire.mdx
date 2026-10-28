@@ -29,6 +29,7 @@ digraph BuildSolitaire {
     ]
 
     start [shape=Mdiamond, label="Start"]
+    install_dependencies [shape=parallelogram, script="python3 -m venv .venv && . .venv/bin/activate && pip install pytest curses", timeout="5m", on_failure="exit", max_retries=0]
     exit  [shape=Msquare, label="Exit"]
 
     // Phase 0: Expand the goal into a detailed spec
@@ -148,7 +149,7 @@ digraph BuildSolitaire {
     check_review [shape=diamond, label="Review OK?"]
 
     // Wiring: linear phases with verify-gate loops
-    start -> expand_spec -> impl_setup -> verify_setup -> check_setup
+    start -> install_dependencies -> expand_spec -> impl_setup -> verify_setup -> check_setup
 
     check_setup -> impl_data  [condition="outcome=succeeded"]
     check_setup -> impl_setup [condition="outcome=failed", label="Retry"]
@@ -269,9 +270,6 @@ provider = "anthropic"
 
 [run.model.fallbacks]
 "claude-sonnet-4-5" = ["openai", "gemini"]
-
-[[run.prepare.steps]]
-script = "python3 -m venv .venv && . .venv/bin/activate && pip install pytest curses"
 
 [run.environment]
 id = "python-dev"

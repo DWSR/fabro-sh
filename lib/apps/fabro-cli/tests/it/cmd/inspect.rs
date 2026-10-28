@@ -137,10 +137,6 @@ fn inspect_resolves_selector_via_server_endpoint() {
               "git": {
                 "author": null
               },
-              "prepare": {
-                "steps": [],
-                "timeout_ms": 300000
-              },
               "execution": {
                 "mode": "normal",
                 "approval": "prompt"

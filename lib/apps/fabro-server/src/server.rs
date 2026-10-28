@@ -4418,6 +4418,32 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         }
     };
 
+    // Normal release is Petri's. An abnormal exit can leave its scopes
+    // running forever; the surviving supervisor must enforce the terminal
+    // stop policy after deciding that this execution will not be resumed.
+    if !worker_exit.succeeded() && final_state.status.is_terminal() {
+        let cleanup = async {
+            let access = state.provider_access().await?;
+            sandbox_access::stop_run_sandboxes(
+                &access,
+                &final_state.spec.settings.run.environment,
+                run_id,
+            )
+            .await
+        };
+        match timeout(Duration::from_secs(30), cleanup).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(
+                run_id = %run_id, error = ?error,
+                "Failed to stop sandboxes after the worker exited"
+            ),
+            Err(error) => tracing::warn!(
+                run_id = %run_id, error = ?error,
+                "Timed out stopping sandboxes after the worker exited"
+            ),
+        }
+    }
+
     accumulate_concluded_run_usage(&state, &final_state);
 
     let mut runs = state.runs.lock().expect("runs lock poisoned");

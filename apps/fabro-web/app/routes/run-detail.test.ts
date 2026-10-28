@@ -20,6 +20,10 @@ let currentRunSummary: any = null;
 let currentRunState: any = null;
 let currentQuestions: any[] = [];
 let currentBoardRuns: any[] = [];
+let retryRunApiResult: Promise<unknown> | null = null;
+const retryRunApiMock = mock((_id: string) =>
+  retryRunApiResult ?? Promise.resolve({ data: null }),
+);
 let deleteRunApiResult: Promise<unknown> | null = null;
 const mountedRenderers: TestRenderer.ReactTestRenderer[] = [];
 
@@ -82,6 +86,7 @@ mock.module("../lib/queries", () => ({
     isValidating: false,
     mutate:       mock(() => Promise.resolve(null)),
   }),
+  useProviders: () => ({ data: null }),
 }));
 
 mock.module("../lib/run-events", () => ({
@@ -110,6 +115,7 @@ mock.module("../lib/api-client", () => ({
   requestSignalOptions: () => undefined,
   runsApi: {
     deleteRun: deleteRunApiMock,
+    retryRun: retryRunApiMock,
   },
   ApiError: class ApiError extends Error {
     readonly status: number;
@@ -200,6 +206,8 @@ const {
   default: RunDetail,
   resolveDockClearance,
 } = await import("./run-detail");
+const { RowActionsMenu } = await import("../components/runs-list/row-actions-menu");
+const { toRunWithStatus } = await import("../data/runs");
 const { default: Runs } = await import("./runs");
 mock.restore();
 type LifecycleToastState = import("./run-detail/lifecycle-toasts").LifecycleToastState;
@@ -346,6 +354,10 @@ async function renderRunDetailHarness({
 
   const router = createMemoryRouter(
     [
+      {
+        path: "/row",
+        element: h(RowActionsMenu, { run: toRunWithStatus(currentRunSummary) }),
+      },
       {
         path:    "/runs",
         element: h(Runs),
@@ -638,7 +650,7 @@ describe("handleLifecycleToastResult", () => {
   });
 });
 
-describe("RunDetail full-height child routes", () => {
+describe("RunDetail and run actions", () => {
   afterEach(() => {
     act(() => {
       for (const renderer of mountedRenderers.splice(0)) {
@@ -653,12 +665,76 @@ describe("RunDetail full-height child routes", () => {
     questionQueryMock.mockClear();
     submitAnswerMock.mockClear();
     submitAnswerHookMock.mockClear();
+    retryRunApiResult = null;
+    retryRunApiMock.mockClear();
     deleteRunApiResult = null;
     deleteRunApiMock.mockClear();
     mutateRunListCachesMock.mockClear();
     swrMutateMock.mockClear();
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
+
+  for (const surface of ["row", "header"] as const) {
+    const initialEntry = surface === "row" ? "/row" : "/runs/run_1";
+    for (const status of ["submitted", "pending", "runnable", "starting", "running", "paused", "blocked", "succeeded", "failed", "dead", "archived"]) {
+      test(`${surface} offers Retry only for terminal, non-archived runs: ${status}`, async () => {
+        const { renderer } = await renderRunDetailHarness({ initialEntry, status });
+        expect(findButtonsByText(renderer, "Retry")).toHaveLength(
+          ["succeeded", "failed", "dead"].includes(status) ? 1 : 0,
+        );
+        if (["succeeded", "failed", "dead"].includes(status)) {
+          expect(findButtonByText(renderer, "Archive")).toBeDefined();
+        }
+      });
+    }
+
+    test(`${surface} retries once while pending and opens the returned new run`, async () => {
+      const response = deferred<unknown>();
+      retryRunApiResult = response.promise;
+      const { renderer, router } = await renderRunDetailHarness({ initialEntry, status: "failed" });
+      await act(async () => { findButtonByText(renderer, "Retry")!.props.onClick(); });
+      expect(textFromNode(renderer.toJSON())).toContain(
+        "Retry creates a new run from the saved specification and starts from the beginning.",
+      );
+      const confirm = findButtonByText(renderer, "Retry run")!;
+      await act(async () => {
+        confirm.props.onClick();
+        confirm.props.onClick();
+      });
+      expect(retryRunApiMock).toHaveBeenCalledTimes(1);
+      expect(retryRunApiMock.mock.calls[0]?.[0]).toBe("run_1");
+      expect(findButtonByText(renderer, "Creating run…")!.props.disabled).toBe(true);
+      expect(findButtonsByText(renderer, "Cancel").at(-1)!.props.disabled).toBe(true);
+      expect(router.state.location.pathname).toBe(initialEntry);
+      const newRun = { ...makeRunSummary({ status: "pending" }), id: "new-run" };
+      await act(async () => { response.resolve({ data: newRun }); });
+      expect(router.state.location.pathname).toBe("/runs/new-run");
+      expect(mutateRunListCachesMock).toHaveBeenCalledTimes(1);
+      expect(swrMutateMock.mock.calls).toContainEqual([
+        ["runs", "detail", "new-run"], newRun, { revalidate: false },
+      ]);
+      expect(swrMutateMock.mock.calls.some(([key]) =>
+        JSON.stringify(key) === JSON.stringify(["runs", "detail", "run_1"]),
+      )).toBe(false);
+    });
+
+    test(`${surface} shows retry errors, stays on the source run, and allows recovery`, async () => {
+      const response = deferred<unknown>();
+      retryRunApiResult = response.promise;
+      const { renderer, router } = await renderRunDetailHarness({ initialEntry, status: "succeeded" });
+      await act(async () => { findButtonByText(renderer, "Retry")!.props.onClick(); });
+      await act(async () => { findButtonByText(renderer, "Retry run")!.props.onClick(); });
+      await act(async () => { response.reject({ status: 422, errors: [{ detail: "Saved environment is unavailable." }] }); });
+      expect(textFromTestNode(renderer.root.findByProps({ role: "alert" }))).toBe("Saved environment is unavailable.");
+      expect(router.state.location.pathname).toBe(initialEntry);
+      expect(mutateRunListCachesMock).not.toHaveBeenCalled();
+      expect(findButtonByText(renderer, "Retry run")!.props.disabled).toBe(false);
+      retryRunApiResult = Promise.resolve({ data: { ...makeRunSummary(), id: "recovered-run" } });
+      await act(async () => { findButtonByText(renderer, "Retry run")!.props.onClick(); });
+      expect(retryRunApiMock).toHaveBeenCalledTimes(2);
+      expect(router.state.location.pathname).toBe("/runs/recovered-run");
+    });
+  }
 
   test("Answer Question on a blocked board card opens that run's pending interview", async () => {
     currentBoardRuns = [

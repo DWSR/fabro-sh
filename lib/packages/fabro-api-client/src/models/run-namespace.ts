@@ -63,9 +63,6 @@ import type { RunInterviewsSettings } from './run-interviews-settings';
 import type { RunModelSettings } from './run-model-settings';
 // May contain unused imports in some cases
 // @ts-ignore
-import type { RunPrepareSettings } from './run-prepare-settings';
-// May contain unused imports in some cases
-// @ts-ignore
 import type { RunScmSettings } from './run-scm-settings';
 
 export interface RunNamespace {
@@ -78,7 +75,6 @@ export interface RunNamespace {
     'inputs': { [key: string]: any; };
     'model': RunModelSettings;
     'git': RunGitSettings;
-    'prepare': RunPrepareSettings;
     'execution': RunExecutionSettings;
     'checkpoint': RunCheckpointSettings;
     'clone': RunCloneSettings;

@@ -82,6 +82,8 @@ fn dump_accepts_server_target_from_separate_home() {
 #[test]
 fn dump_exports_large_command_output_backed_by_blob_refs() {
     let context = test_context!();
+    // Exceed the 100 KiB blob threshold without emitting thousands of log
+    // events: this tests export hydration, not event-stream throughput.
     let workflow = context.temp_dir.join("large-output.fabro");
     fs::write(
         &workflow,
@@ -91,7 +93,7 @@ fn dump_exports_large_command_output_backed_by_blob_refs() {
 
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
-    big   [shape=parallelogram, label="Big", script="yes xxxxxxxxxxxxxxxx | head -n 8000"]
+    big   [shape=parallelogram, label="Big", script="printf '%0136000d' 0"]
 
     start -> big -> exit
 }
@@ -144,6 +146,10 @@ fn dump_exports_large_command_output_backed_by_blob_refs() {
         !run_json.contains("blob://sha256/"),
         "run export should hydrate blob refs\n{run_json}"
     );
+    assert_eq!(
+        fs::read_to_string(output_dir.join("stages/002-big@1/output.log")).unwrap(),
+        "0".repeat(136_000)
+    );
 }
 
 #[test]
@@ -160,7 +166,7 @@ fn dump_exports_blob_refs_and_artifacts_together() {
 
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
-    big   [shape=parallelogram, label="Big", script="mkdir -p assets/shared && printf exported > assets/shared/report.txt && yes xxxxxxxxxxxxxxxx | head -n 8000"]
+    big   [shape=parallelogram, label="Big", script="mkdir -p assets/shared && printf exported > assets/shared/report.txt && printf '%0136000d' 0"]
 
     start -> big -> exit
 }
@@ -229,6 +235,10 @@ include = ["assets/**"]
     assert!(
         !run_json.contains("blob://sha256/"),
         "run export should hydrate blob refs\n{run_json}"
+    );
+    assert_eq!(
+        fs::read_to_string(output_dir.join("stages/002-big@1/output.log")).unwrap(),
+        "0".repeat(136_000)
     );
     assert_eq!(
         fs::read_to_string(

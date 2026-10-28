@@ -6,8 +6,9 @@
  * keyed by `stream_seq`. The mapping from items to views follows
  * `lib/components/fabro-petri/VIEWS.md`.
  */
-import { StageOutcome, StageState } from "@qltysh/fabro-api-client";
+import { ReviewTargetKind, StageOutcome, StageState } from "@qltysh/fabro-api-client";
 import type {
+  ReviewTarget,
   RunProjection,
   RunStreamItem,
   StageProjection,
@@ -156,6 +157,18 @@ export function itemsForStage(
 
 // ── Questions ───────────────────────────────────────────────────────────
 
+/** Match the pending-question projection's document reference mapping. */
+function parseReviewTarget(value: unknown): ReviewTarget | null {
+  if (!isRecord(value)) return null;
+  if (value.kind != null && value.kind !== ReviewTargetKind.DOCUMENT) return null;
+  const label = getString(value, "label")?.trim();
+  const url = getString(value, "url")?.trim();
+  if (!label || !url) return null;
+  // Keep the recorded URL (including query and fragment). The shared
+  // question renderer checks URL safety before creating a link.
+  return { label, url, kind: ReviewTargetKind.DOCUMENT };
+}
+
 function parseOptions(value: unknown): InterviewOption[] {
   if (!Array.isArray(value)) return [];
   const out: InterviewOption[] = [];
@@ -243,7 +256,7 @@ export function parsePetriInterviewPairs(stream: PetriStream): HumanInterviewPai
           allowFreeform: getBool(question, "freeform") === true,
           timeoutSeconds: timeoutMs !== undefined ? Math.round(timeoutMs / 1000) : null,
           contextDisplay: getString(question, "context") ?? null,
-          reviewTarget: null,
+          reviewTarget: parseReviewTarget(question?.reference),
         },
         resolution: null,
       });
@@ -399,55 +412,6 @@ export function deriveRunPhasesFromStream(
   return phases;
 }
 
-// ── Platform records ────────────────────────────────────────────────────
-
-export interface PlatformRecordEntry {
-  streamSeq: number;
-  kind: string;
-  ts: string;
-  /** The stage the record belongs to, as `execution:firing`, if any. */
-  stageKey: string | null;
-  /** A one-line summary: the commit sha, the pull request url, the notice. */
-  detail: string | null;
-}
-
-/** The platform records on the stream that name a Fabro fact worth a row. */
-export function platformRecordsOf(stream: PetriStream): PlatformRecordEntry[] {
-  const out: PlatformRecordEntry[] = [];
-  for (const item of stream) {
-    const kind = platformRecordKind(item);
-    if (!kind) continue;
-    const rec = record(item) ?? {};
-    const position = getObject(item.item, "position");
-    const execution = getNumber(position, "execution") ?? getNumber(rec, "execution");
-    const firing = getNumber(position, "firing") ?? getNumber(rec, "firing");
-    const stageKey =
-      execution !== undefined && firing !== undefined ? `${execution}:${firing}` : null;
-    let detail: string | null = null;
-    switch (kind) {
-      case "checkpoint":
-        detail = getString(rec, "git_commit_sha")?.slice(0, 12) ?? null;
-        break;
-      case "pull_request.created":
-        detail = getString(rec, "html_url") ?? getString(rec, "url") ?? null;
-        break;
-      case "run.notice":
-        detail = getString(rec, "message") ?? getString(rec, "code") ?? null;
-        break;
-      case "run.title":
-        detail = getString(rec, "title") ?? null;
-        break;
-      case "run.branch":
-        detail = getString(rec, "run_branch") ?? null;
-        break;
-      default:
-        continue;
-    }
-    out.push({ streamSeq: item.stream_seq, kind, ts: streamItemTs(item), stageKey, detail });
-  }
-  return out;
-}
-
 // ── Debug rows ──────────────────────────────────────────────────────────
 
 /** A stream item as the events listing and the stage debug tab show it. */
@@ -498,11 +462,25 @@ export function findPetriEdgeForStage(
     if (petriStageLabel(item) !== stageLabel) continue;
     const target = getString(getObject(derived(item), "target"), "name");
     if (!target) continue;
+    const edge = selectedEdgeMetadata(item);
+    const condition = matchedCondition(item) ?? null;
+    let reason: EdgeSelection["reason"] = "unknown";
+    if (condition) {
+      reason = "condition";
+    } else if (
+      edge &&
+      getString(getObject(subjectNode(item), "meta"), "kind") === "conditional" &&
+      (edge.condition === undefined || edge.condition === "")
+    ) {
+      // Other handlers can select a conditionless edge by preferred label or
+      // suggested target. Only a conditional stage establishes this fallback.
+      reason = "unconditional";
+    }
     latest = {
       fromNode: getString(subjectNode(item), "name") ?? stageLabel,
       toNode: target,
-      reason: "condition",
-      condition: matchedCondition(item) ?? null,
+      reason,
+      condition,
     };
   }
   return latest;
@@ -636,10 +614,20 @@ export function agentEnvelopesOf(items: PetriStream): PetriAgentEnvelope[] {
  * the edge's `condition` when it has one (EVENTS.md "Source metadata").
  */
 export function matchedCondition(item: RunStreamItem): string | undefined {
-  const edge = getNumber(petriBody(item), "edge");
-  if (edge === undefined) return undefined;
+  const condition = getString(selectedEdgeMetadata(item), "condition");
+  return condition?.trim() ? condition : undefined;
+}
+
+/** Missing or inconsistent metadata does not establish an unconditional edge. */
+function selectedEdgeMetadata(item: RunStreamItem): UnknownRecord | undefined {
+  const body = petriBody(item);
+  if (getString(body, "kind") !== "edge") return undefined;
+  const edge = getNumber(body, "edge");
+  if (edge === undefined || !Number.isSafeInteger(edge) || edge < 0) return undefined;
   const edges = getObject(getObject(subjectNode(item), "meta"), "edges");
-  return getString(getObject(edges, String(edge)), "condition");
+  const selected = getObject(edges, String(edge));
+  const target = getString(getObject(derived(item), "target"), "name");
+  return target && getString(selected, "to") === target ? selected : undefined;
 }
 
 /**

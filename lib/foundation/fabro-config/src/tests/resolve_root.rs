@@ -202,9 +202,8 @@ _version = 1
 [run.environment]
 id = "bad"
 
-[[run.prepare.steps]]
-script = "echo hi"
-command = ["echo", "hi"]
+[run.artifacts]
+include = ["/absolute/path"]
 "#,
         r#"
 [environments.bad]
@@ -218,5 +217,5 @@ provider = "Not A Provider"
     .to_string();
 
     assert!(rendered.contains("run.environment.provider"));
-    assert!(rendered.contains("run.prepare.steps[0]"));
+    assert!(rendered.contains("run.artifacts.include[0]"));
 }

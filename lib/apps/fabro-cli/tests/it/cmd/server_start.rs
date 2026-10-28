@@ -439,6 +439,7 @@ fn foreground_start_writes_tracing_to_stdout_by_default() {
     let storage_log_path = storage_dir.join("logs").join("server.log");
     std::fs::create_dir_all(storage_log_path.parent().unwrap()).unwrap();
     std::fs::write(&storage_log_path, "stale pre-start log entry\n").unwrap();
+    let stdout_capture = tempfile::NamedTempFile::new_in("/tmp").unwrap();
 
     let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_fabro"));
     apply_test_isolation(&mut cmd, home_dir.path());
@@ -450,7 +451,7 @@ fn foreground_start_writes_tracing_to_stdout_by_default() {
         .arg("--config")
         .arg(&config_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
+        .stdout(stdout_capture.reopen().unwrap())
         .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().expect("server start should spawn");
@@ -478,6 +479,10 @@ fn foreground_start_writes_tracing_to_stdout_by_default() {
         "expected foreground start to create server.json"
     );
 
+    // The daemon record is written before startup tracing. Wait for that trace
+    // before stopping the server so shutdown cannot race the log under test.
+    wait_for_log_line(stdout_capture.path(), "API server started");
+
     let stop_output = {
         let mut stop = std::process::Command::new(env!("CARGO_BIN_EXE_fabro"));
         apply_test_isolation(&mut stop, home_dir.path());
@@ -497,7 +502,8 @@ fn foreground_start_writes_tracing_to_stdout_by_default() {
     let output = child
         .wait_with_output()
         .expect("server start output should be readable");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = std::fs::read_to_string(stdout_capture.path())
+        .expect("foreground stdout should be readable");
     assert!(
         stdout.contains("API server started"),
         "expected foreground stdout to contain server tracing, got:\n{stdout}\nforeground stderr:\n{}",
