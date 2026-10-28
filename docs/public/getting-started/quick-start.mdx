@@ -65,22 +65,16 @@ This creates `.fabro/project.toml` and a starter workflow under `.fabro/workflow
 
 ## Configure API keys
 
-For local CLI runs, export at least one LLM provider key in your shell:
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=AI...
-```
-
-<Note>
-You only need one provider key to get started. Add more to enable multi-model workflows.
-
-For server-backed runs, store provider keys in the server vault instead:
+`fabro run` uses the Fabro server even when you run it from a local terminal. If installation has not already configured a provider, store a key in that server's vault:
 
 ```bash
 fabro secret set ANTHROPIC_API_KEY sk-ant-...
 ```
+
+You can also use `fabro provider login --provider anthropic` for guided setup. You only need one provider to get started; add more to enable multi-model workflows.
+
+<Note>
+Exporting a provider key in your shell does not configure server-backed workflows. For a remote server, use `fabro secret --server https://fabro.example.com set ANTHROPIC_API_KEY sk-ant-...` and `fabro run --server https://fabro.example.com hello` so both commands use the same server. Direct `fabro exec` and SDK callers have different [credential sources](/core-concepts/models#credential-sources).
 </Note>
 
 ## Run your first workflow

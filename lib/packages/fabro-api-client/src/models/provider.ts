@@ -59,7 +59,7 @@ export interface Provider {
      */
     'configured': boolean;
     /**
-     * Suggested vault secret name for configuring this provider, derived from the first vault credential reference in the provider catalog. Null when the provider has no vault credential (e.g. no-auth or env-only providers). Used to prefill the create-secret form.
+     * Suggested vault secret name for configuring this provider: the first conventional secret name for its catalog authentication scheme. Null when that scheme declares no conventional secret names (for example, no-auth providers). Used to prefill the create-secret form; providers such as Modal require more than one secret.
      */
     'expected_secret_name'?: string | null;
 }

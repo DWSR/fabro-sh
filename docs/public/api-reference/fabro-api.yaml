@@ -8693,11 +8693,11 @@ components:
         expected_secret_name:
           type: ["string", "null"]
           description: |
-            Suggested vault secret name for configuring this provider,
-            derived from the first vault credential reference in the
-            provider catalog. Null when the provider has no vault
-            credential (e.g. no-auth or env-only providers). Used to
-            prefill the create-secret form.
+            Suggested vault secret name for configuring this provider: the
+            first conventional secret name for its catalog authentication scheme.
+            Null when that scheme declares no conventional secret names (for
+            example, no-auth providers). Used to prefill the create-secret form;
+            providers such as Modal require more than one secret.
 
     ProviderId:
       description: LLM provider identifier.
@@ -8868,10 +8868,12 @@ components:
         configured:
           type: boolean
           description: |
-            Whether credential material is present for this model's provider on the
-            server (vault entry or environment variable). Does NOT imply the
-            credential is valid or that requests will succeed; call
-            `POST /models/{id}/test` to verify usability.
+            Whether the server resolved credentials and built a client for this
+            model's provider. Provider API keys and OAuth records come from the
+            server vault, not process environment variables. Bedrock SigV4 uses
+            the separate AWS default credential chain; no-auth providers need no
+            key. Does NOT imply authentication or model requests will succeed;
+            call `POST /models/{id}/test` to test usability.
 
     ModelTestResult:
       description: Result of testing a model in `basic` or `deep` mode.
