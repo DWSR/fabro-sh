@@ -249,7 +249,7 @@ describe("stage renderers", () => {
     expect(findPetriEdgeForStage(gate.stream, "gate@1")).toEqual({
       fromNode: "gate",
       toNode: "no",
-      reason: "condition",
+      reason: "unknown",
       condition: null,
     });
     expect(findPetriEdgeForStage(gate.stream, "exit@1")).toBeNull();

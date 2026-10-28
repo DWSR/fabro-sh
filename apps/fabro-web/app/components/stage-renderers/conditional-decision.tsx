@@ -10,13 +10,14 @@ import type { Stage } from "../stage-sidebar";
 import { StageMetaBar } from "./meta-bar";
 import type { EdgeSelection } from "./helpers";
 
-const REASON_LABEL: Record<string, string> = {
+const REASON_LABEL: Record<EdgeSelection["reason"], string> = {
   condition: "Matched condition",
   unconditional: "Default edge",
   preferred_label: "Preferred label",
+  unknown: "Reason unavailable",
 };
 
-function reasonLabel(reason: string): string {
+function reasonLabel(reason: EdgeSelection["reason"]): string {
   return REASON_LABEL[reason] ?? reason;
 }
 
