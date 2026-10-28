@@ -462,11 +462,25 @@ export function findPetriEdgeForStage(
     if (petriStageLabel(item) !== stageLabel) continue;
     const target = getString(getObject(derived(item), "target"), "name");
     if (!target) continue;
+    const edge = selectedEdgeMetadata(item);
+    const condition = matchedCondition(item) ?? null;
+    let reason: EdgeSelection["reason"] = "unknown";
+    if (condition) {
+      reason = "condition";
+    } else if (
+      edge &&
+      getString(getObject(subjectNode(item), "meta"), "kind") === "conditional" &&
+      (edge.condition === undefined || edge.condition === "")
+    ) {
+      // Other handlers can select a conditionless edge by preferred label or
+      // suggested target. Only a conditional stage establishes this fallback.
+      reason = "unconditional";
+    }
     latest = {
       fromNode: getString(subjectNode(item), "name") ?? stageLabel,
       toNode: target,
-      reason: "condition",
-      condition: matchedCondition(item) ?? null,
+      reason,
+      condition,
     };
   }
   return latest;
@@ -600,10 +614,20 @@ export function agentEnvelopesOf(items: PetriStream): PetriAgentEnvelope[] {
  * the edge's `condition` when it has one (EVENTS.md "Source metadata").
  */
 export function matchedCondition(item: RunStreamItem): string | undefined {
-  const edge = getNumber(petriBody(item), "edge");
-  if (edge === undefined) return undefined;
+  const condition = getString(selectedEdgeMetadata(item), "condition");
+  return condition?.trim() ? condition : undefined;
+}
+
+/** Missing or inconsistent metadata does not establish an unconditional edge. */
+function selectedEdgeMetadata(item: RunStreamItem): UnknownRecord | undefined {
+  const body = petriBody(item);
+  if (getString(body, "kind") !== "edge") return undefined;
+  const edge = getNumber(body, "edge");
+  if (edge === undefined || !Number.isSafeInteger(edge) || edge < 0) return undefined;
   const edges = getObject(getObject(subjectNode(item), "meta"), "edges");
-  return getString(getObject(edges, String(edge)), "condition");
+  const selected = getObject(edges, String(edge));
+  const target = getString(getObject(derived(item), "target"), "name");
+  return target && getString(selected, "to") === target ? selected : undefined;
 }
 
 /**
