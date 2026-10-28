@@ -43,22 +43,36 @@ the vault:
 
 `FABRO_JWT_PRIVATE_KEY` and `FABRO_JWT_PUBLIC_KEY` are removed. `SESSION_SECRET` is the single auth root.
 
-Provisioning into the vault is not the same as the resolver being vault-only. `VaultCredentialSource`
-(`lib/foundation/fabro-auth/src/vault_source.rs`) reads each secret name lithos-llm asks for from
-the process environment first and the vault second, under the same conventional names. Which paths
-that environment lookup is live on is a per-process question:
+For conventional provider API-key names, `VaultCredentialSource::new` and
+`SqlVaultCredentialSource::new` check the process environment before the vault. Their
+`vault_only` constructors disable that lookup. OAuth records and interpolated secret headers
+resolve through the vault separately. The owning process chooses the source:
 
-- **Server process** — inert. `lib/apps/fabro-server/src/server.rs:2453` builds
-  `SqlVaultCredentialSource::vault_only(...)`, so the env lookup always returns `None`.
-- **Worker process** — wired but effectively inert for provider keys. `build_llm_source`
-  (`lib/components/fabro-workflow/src/pipeline/initialize.rs:275`) builds the run's credential
-  source with `VaultCredentialSource::new`, which carries the process-env fallback; the
-  provider-listing path does the same via `with_env_lookup(process_env_var)`
-  (`operations/start.rs:529`). But the worker's env was cleared and repopulated from
-  `WORKER_ENV_ALLOWLIST` (`lib/apps/fabro-server/src/spawn_env.rs:6`), which does not include
-  provider API keys. Exporting a provider key in the server's shell therefore has no effect on runs.
-- **`fabro exec` and direct `fabro-llm` SDK usage** — live. These have no vault and read process
-  env deliberately.
+- **Server process** — `lib/apps/fabro-server/src/server.rs` constructs
+  `SqlVaultCredentialSource::vault_only(...)`. Model calls, provider listing and gateway
+  completions therefore do not use process-environment provider API keys.
+- **Worker process** — `runtime_spec` in
+  `lib/apps/fabro-cli/src/commands/run/petri_worker.rs` constructs `VaultCredentialSource::new`.
+  The worker environment is cleared and repopulated from `WORKER_ENV_ALLOWLIST` in
+  `lib/apps/fabro-server/src/spawn_env.rs`, which excludes conventional provider API keys,
+  including Bedrock bearer tokens. Exporting them in the server's shell has no effect on runs.
+- **Direct `fabro exec` (no server target)** — `CommandContext::llm_source` in
+  `lib/apps/fabro-cli/src/command_context.rs` opens the local SQL secret store and constructs
+  `SqlVaultCredentialSource::new`. Conventional API keys use environment-first lookup,
+  then that local store.
+- **`fabro exec --server ...`** — `FABRO_SERVER` also selects this mode. The CLI sends completions through the gateway; the target
+  server resolves credentials using its vault-only source.
+- **Direct SDK usage** — the caller selects a `CredentialProvider`. For example,
+  `VaultCredentialSource::environment_only()` explicitly reads process-environment keys.
+
+Bedrock SigV4 is a separate mechanism: the AWS default credential chain's identity inputs
+are deliberately allowlisted into workers so sessions can refresh. This does not enable
+environment lookup for Bedrock bearer tokens. Providers with no authentication need no key.
+
+Installation can accept an explicit stdin or named-environment credential input and persist
+it in the vault; this is provisioning, not a runtime fallback. Endpoint catalog overrides such
+as `OPENAI_BASE_URL` are also independent of credential lookup. The public contract lives in
+`docs/public/core-concepts/models.mdx` under **Credential sources**.
 
 ## Which process resolves what
 
