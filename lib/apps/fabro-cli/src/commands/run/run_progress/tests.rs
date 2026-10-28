@@ -6,7 +6,9 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use fabro_types::{RunStreamItemKind, fixtures};
+use fabro_types::{
+    DirtyStatus, ForkSourceRef, GitContext, GitRunTarget, RunStreamItemKind, fixtures, test_support,
+};
 use fabro_util::terminal::Styles;
 use serde_json::{Value, json};
 
@@ -202,4 +204,83 @@ fn skipped_stage_is_dim_in_both_renderers_and_visible_in_plain_replay_without_a_
         console::strip_ansi_codes(&progress),
         "    ⊘ work  skipped  0ms\n"
     );
+}
+
+fn branch_record(base_sha: Option<&str>) -> RunStreamItem {
+    RunStreamItem {
+        run_id:      fixtures::RUN_1,
+        stream_seq:  2,
+        kind:        RunStreamItemKind::Platform,
+        id:          "2".to_string(),
+        recorded_at: 1_789_706_579_000,
+        item:        json!({"record": {
+            "kind": "run.branch",
+            "run_branch": format!("fabro/run/{}", fixtures::RUN_1),
+            "base_sha": base_sha
+        }}),
+    }
+}
+
+fn source_spec() -> RunSpec {
+    RunSpec {
+        git: Some(GitContext {
+            origin_url: String::new(),
+            branch:     "main".to_string(),
+            // The branch-point record, not this creation-time observation,
+            // supplies the SHA displayed next to the source branch.
+            sha:        Some("1111111111111111111111111111111111111111".to_string()),
+            dirty:      DirtyStatus::Clean,
+        }),
+        ..test_support::test_run_spec()
+    }
+}
+
+fn render_base(spec: &RunSpec, base_sha: Option<&str>, verbose: bool) -> String {
+    let output = Output::default();
+    let renderer = ProgressRenderer::new_plain(Box::new(output.clone()), false);
+    let mut ui = ProgressUI::with_renderer(renderer, verbose).with_source_spec(spec);
+    let record = branch_record(base_sha);
+    let raw = petri_stream::raw_line(&record).unwrap();
+    ui.handle_stream_item(&record);
+    ui.finish();
+    assert_eq!(petri_stream::raw_line(&record).unwrap(), raw);
+    output.text()
+}
+
+#[test]
+fn base_header_uses_saved_source_branch_and_recorded_base_commit() {
+    let spec = source_spec();
+    for verbose in [false, true] {
+        insta::allow_duplicates! {
+            insta::assert_snapshot!(render_base(&spec, Some("abcdef0123456789"), verbose), @"    Base: main (abcdef012345)");
+        }
+        assert_eq!(render_base(&spec, None, verbose), "");
+    }
+}
+
+#[test]
+fn base_header_uses_only_the_commit_when_source_branch_is_unknown_or_ambiguous() {
+    let mut absent = source_spec();
+    absent.git = None;
+    let mut empty = source_spec();
+    empty.git.as_mut().unwrap().branch = "  ".to_string();
+    let mut fork = source_spec();
+    fork.fork_source_ref = Some(ForkSourceRef {
+        source_run_id:  fixtures::RUN_2,
+        checkpoint_sha: "abcdef0123456789".to_string(),
+    });
+    let mut tag = source_spec();
+    tag.target = Some(RunTarget::Git(GitRunTarget {
+        repo:   "acme/widgets".to_string(),
+        branch: "main".to_string(),
+        tag:    Some("v1".to_string()),
+        sha:    None,
+    }));
+    for spec in [absent, empty, fork, tag] {
+        for verbose in [false, true] {
+            insta::allow_duplicates! {
+                insta::assert_snapshot!(render_base(&spec, Some("abcdef0123456789"), verbose), @"    Base: abcdef012345");
+            }
+        }
+    }
 }

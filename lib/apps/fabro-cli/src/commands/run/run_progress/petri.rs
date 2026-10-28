@@ -221,10 +221,6 @@ fn platform_progress_event(record: &Value) -> Option<ProgressEvent> {
         }),
         "run.branch" => Some(ProgressEvent::WorkflowStarted {
             worktree_dir: None,
-            base_branch:  record
-                .get("run_branch")
-                .and_then(Value::as_str)
-                .map(str::to_string),
             base_sha:     record
                 .get("base_sha")
                 .and_then(Value::as_str)

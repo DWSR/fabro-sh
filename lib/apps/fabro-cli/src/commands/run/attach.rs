@@ -218,7 +218,7 @@ async fn attach_petri_run_with_client(
     printer: Printer,
 ) -> Result<ExitCode> {
     let is_tty = std::io::stderr().is_terminal();
-    let mut progress_ui = run_progress::ProgressUI::new(is_tty, opts.verbose);
+    let mut progress_ui = run_progress::ProgressUI::new(is_tty, opts.verbose, &state.spec);
     let ctrl_c_signal = ctrl_c();
     tokio::pin!(ctrl_c_signal);
 

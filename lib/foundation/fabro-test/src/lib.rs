@@ -74,6 +74,7 @@ static INSTA_FILTERS: &[(&str, &str)] = &[
         "Duration:  [DURATION]",
     ),
     (r"Base: [^\n]+ \([0-9a-f]{7,40}\)", "Base: [BASE]"),
+    (r"Base: [0-9a-f]{7,40}\b", "Base: [BASE]"),
     (r"(Branch: [^\n]+ from )[0-9a-f]{7,40}", "${1}[SHA]"),
     // The sandbox driver's events: per-process event source ids, operation
     // ids, sub-second durations, and a local sandbox's path-derived id.

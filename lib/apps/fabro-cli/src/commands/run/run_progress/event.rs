@@ -27,7 +27,6 @@ pub(super) enum ProgressEvent {
     },
     WorkflowStarted {
         worktree_dir: Option<String>,
-        base_branch:  Option<String>,
         base_sha:     Option<String>,
     },
     StageStarted {
